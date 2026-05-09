@@ -73,14 +73,15 @@ def _front_month_mnq() -> str:
 
 
 class TopStepBroker:
-    def __init__(self, username: str, api_key: str, env: str = 'demo'):
+    def __init__(self, username: str, api_key: str, env: str = 'demo',
+                 account_id: int | None = None):
         urls = URLS[env]
         self.base = urls['rest']
         self.token = None
         self.token_expiry = None
         self.username = username
         self.api_key = api_key
-        self.account_id = None
+        self.account_id = account_id
         self.contract_id = None
         self.tick_size = 0.25
 
@@ -136,9 +137,19 @@ class TopStepBroker:
         accounts = acct_data.get('accounts', [])
         if not accounts:
             raise RuntimeError("No active accounts found")
-        self.account_id = accounts[0]['id']
-        acct_name = accounts[0].get('name', 'Unknown')
-        log.info(f"Account: {acct_name} (ID: {self.account_id})")
+        if self.account_id:
+            match = [a for a in accounts if a['id'] == self.account_id]
+            if not match:
+                names = ', '.join(f"{a.get('name')} ({a['id']})" for a in accounts)
+                raise RuntimeError(
+                    f"Account {self.account_id} not found. Available: {names}")
+            acct = match[0]
+        else:
+            acct = accounts[0]
+            self.account_id = acct['id']
+        acct_name = acct.get('name', 'Unknown')
+        acct_bal = acct.get('balance', 0)
+        log.info(f"Account: {acct_name} (ID: {self.account_id}, ${acct_bal:,.2f})")
 
         self.contract_id = _front_month_mnq()
         log.info(f"Contract: {self.contract_id}")

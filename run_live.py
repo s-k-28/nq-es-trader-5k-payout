@@ -67,7 +67,9 @@ def main():
         print(f"  {model:15s}  ${risk:,}")
     print()
 
-    broker = TopStepBroker(username, api_key, env=args.env)
+    acct_id = os.getenv('TOPSTEP_ACCOUNT_ID')
+    acct_id = int(acct_id) if acct_id else None
+    broker = TopStepBroker(username, api_key, env=args.env, account_id=acct_id)
 
     try:
         broker.connect()
