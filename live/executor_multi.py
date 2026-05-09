@@ -299,12 +299,18 @@ class LiveExecutor:
         if qty <= 0:
             return
 
+        dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
         potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
-        if self.daily_pnl_usd - potential_loss < -self.dollar_loss_cap:
-            log.info(f"    SKIP -- DLC: P&L ${self.daily_pnl_usd:,.0f}, "
-                     f"potential -${potential_loss:,.0f} would breach "
-                     f"-${self.dollar_loss_cap:,.0f}")
-            return
+        if potential_loss > dlc_remaining:
+            max_qty = int(dlc_remaining / (sig.risk_ticks * MNQ_TICK_VALUE))
+            if max_qty <= 0:
+                log.info(f"    SKIP -- DLC exhausted: P&L ${self.daily_pnl_usd:,.0f}, "
+                         f"remaining ${dlc_remaining:,.0f}")
+                return
+            log.info(f"    DLC scale: {qty} -> {max_qty} MNQ "
+                     f"(remaining ${dlc_remaining:,.0f})")
+            qty = max_qty
+            potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
 
         log.info(f"\n>>> SIGNAL: [{sig.model}] {sig.direction.upper()} "
                  f"@ {sig.entry:.2f} ({qty} MNQ, ${model_risk} risk tier)")
