@@ -6,14 +6,14 @@ min(50, floor(risk_dollars / (risk_ticks * $0.50))).
 
 Risk controls (matching backtest engine_v2 + funded_sim):
 - Daily win cap: 2.0R total, stop taking signals
-- Dollar loss cap: $1,200/day, skip trades once breached
+- Dollar loss cap: $500/day, skip trades once breached
 - Consecutive loss cooldown: 10 losses, skip next signal
 - No daily R loss limit (allows intraday recovery)
 - BE at 0.6R, trail at 0.001, pp=0.0 (from model risk profiles)
 
 Funded account rules (TopStepX 100K XFA):
 - $3,000 trailing drawdown, locks at $0 floor when peak >= $3K
-- $2,000 max payout, 50% of balance, 5 green days ($200+)
+- $5,000 max payout, 30% of balance, 5 green days ($150+)
 """
 from __future__ import annotations
 import logging
