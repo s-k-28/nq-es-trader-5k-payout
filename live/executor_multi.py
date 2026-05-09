@@ -85,17 +85,36 @@ class LiveExecutor:
         self.dollar_loss_cap = cfg.funded.dollar_loss_cap
 
     def run(self):
-        log.info("Loading historical bars for warmup (need 50+ daily bars for regime)...")
-        self.buf = self.broker.get_bars(minutes_back=120000)
-        log.info(f"Loaded {len(self.buf)} bars "
-                 f"({self.buf['datetime'].min()} to {self.buf['datetime'].max()})")
-
-        self.daily_df = build_daily_bars(self.buf)
-        self.daily_df['date'] = pd.to_datetime(self.daily_df['date']).dt.date
+        log.info("Fetching daily bars from API for regime detection...")
+        self.daily_df = self.broker.get_daily_bars(days_back=90)
+        if not self.daily_df.empty:
+            self.daily_df['date'] = pd.to_datetime(self.daily_df['date']).dt.date
         n_daily = len(self.daily_df)
-        log.info(f"Daily bars: {n_daily} (need 50+ for regime)")
-        if n_daily < 50:
-            log.warning(f"Only {n_daily} daily bars -- regime map will be incomplete")
+        log.info(f"Daily bars from API: {n_daily}")
+        if n_daily < 20:
+            log.warning(f"Only {n_daily} daily bars -- regime will default to 'chop'")
+        elif n_daily < 50:
+            log.info(f"Using EMA20-only regime ({n_daily} bars, need 50 for full)")
+
+        log.info("Fetching recent 1-min bars for signal warmup...")
+        self.buf = self.broker.get_bars(minutes_back=20000)
+        if self.buf.empty:
+            log.warning("No 1-min bars returned, retrying with shorter window...")
+            self.buf = self.broker.get_bars(minutes_back=5000)
+        if not self.buf.empty:
+            log.info(f"Loaded {len(self.buf)} bars "
+                     f"({self.buf['datetime'].min()} to {self.buf['datetime'].max()})")
+            intraday_daily = build_daily_bars(self.buf)
+            intraday_daily['date'] = pd.to_datetime(intraday_daily['date']).dt.date
+            if not self.daily_df.empty:
+                combined = pd.concat([self.daily_df, intraday_daily], ignore_index=True)
+                self.daily_df = combined.drop_duplicates('date', keep='last') \
+                    .sort_values('date').reset_index(drop=True)
+            else:
+                self.daily_df = intraday_daily
+            log.info(f"Combined daily bars: {len(self.daily_df)}")
+        else:
+            log.warning("No 1-min bars available -- will rely on daily bars only")
 
         acct = self.broker.get_account_info()
         self.start_balance = acct.get('balance', 100000)

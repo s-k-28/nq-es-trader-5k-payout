@@ -40,10 +40,13 @@ class MultiModelGenerator:
     def _build_context(self, daily: pd.DataFrame) -> dict:
         daily_map = {}
         regime_map = {}
+        if daily.empty:
+            return {'daily_map': daily_map, 'regime_map': regime_map}
         daily_s = daily.sort_values('date').reset_index(drop=True)
         closes = daily_s['close'].values
-        ema20 = self._ema(closes, 20)
-        ema50 = self._ema(closes, 50)
+        n = len(closes)
+        ema20 = self._ema(closes, 20) if n >= 2 else closes.copy()
+        ema50 = self._ema(closes, 50) if n >= 2 else closes.copy()
 
         for i in range(1, len(daily_s)):
             d = pd.Timestamp(daily_s.iloc[i]['date']).date()
@@ -52,9 +55,9 @@ class MultiModelGenerator:
                 'pdh': prev['high'], 'pdl': prev['low'],
                 'prev_close': prev['close'],
             }
+            c = prev['close']
+            above20 = c > ema20[i - 1]
             if i >= 50:
-                c = prev['close']
-                above20 = c > ema20[i - 1]
                 above50 = c > ema50[i - 1]
                 if above20 and above50:
                     regime_map[d] = 'bull'
@@ -62,6 +65,10 @@ class MultiModelGenerator:
                     regime_map[d] = 'bear'
                 else:
                     regime_map[d] = 'chop'
+            elif i >= 20:
+                regime_map[d] = 'bull' if above20 else 'bear'
+            else:
+                regime_map[d] = 'chop'
 
         return {'daily_map': daily_map, 'regime_map': regime_map}
 

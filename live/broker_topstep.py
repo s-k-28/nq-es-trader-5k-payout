@@ -97,14 +97,22 @@ class TopStepBroker:
     def _post(self, endpoint: str, payload: dict = None) -> dict:
         self._ensure_token()
         url = f"{self.base}{endpoint}"
-        resp = requests.post(url, json=payload or {}, headers=self._headers(),
-                             timeout=10)
+        for attempt in range(4):
+            resp = requests.post(url, json=payload or {}, headers=self._headers(),
+                                 timeout=15)
+            if resp.status_code == 429:
+                wait = min(2 ** attempt * 2, 30)
+                log.warning(f"Rate limited (429), retry in {wait}s (attempt {attempt+1}/4)")
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            if not data.get('success', True):
+                err = data.get('errorMessage', 'Unknown error')
+                raise RuntimeError(f"TopStepX API error: {err}")
+            return data
         resp.raise_for_status()
-        data = resp.json()
-        if not data.get('success', True):
-            err = data.get('errorMessage', 'Unknown error')
-            raise RuntimeError(f"TopStepX API error: {err}")
-        return data
+        return {}
 
     def connect(self):
         log.info("Authenticating with TopStepX...")
@@ -167,23 +175,40 @@ class TopStepBroker:
 
         all_bars = []
         chunk_start = start
+        empty_streak = 0
         while chunk_start < end:
             chunk_end = min(chunk_start + timedelta(minutes=999), end)
-            data = self._post('/api/History/retrieveBars', {
-                'contractId': self.contract_id,
-                'startTime': chunk_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'endTime': chunk_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                'unit': 2,
-                'unitNumber': 1,
-                'limit': 1000,
-                'live': False,
-                'includePartialBar': False,
-            })
+            try:
+                data = self._post('/api/History/retrieveBars', {
+                    'contractId': self.contract_id,
+                    'startTime': chunk_start.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'endTime': chunk_end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'unit': 2,
+                    'unitNumber': 1,
+                    'limit': 1000,
+                    'live': False,
+                    'includePartialBar': False,
+                })
+            except Exception as e:
+                log.warning(f"Bar fetch failed: {e}")
+                chunk_start = chunk_end
+                time.sleep(1)
+                continue
             bars = data.get('bars', [])
             all_bars.extend(bars)
-            if len(bars) < 1000:
+            if len(bars) == 0:
+                empty_streak += 1
+                chunk_start = chunk_end
+            elif len(bars) < 1000:
+                empty_streak = 0
+                chunk_start = chunk_end
+            else:
+                empty_streak = 0
+                last_t = pd.to_datetime(bars[-1]['t'])
+                chunk_start = last_t + timedelta(minutes=1)
+            if empty_streak > 5 and all_bars:
                 break
-            chunk_start = chunk_end
+            time.sleep(0.5)
 
         if not all_bars:
             return pd.DataFrame()
@@ -194,6 +219,34 @@ class TopStepBroker:
         df['datetime'] = pd.to_datetime(df['datetime'])
         df = df.sort_values('datetime').drop_duplicates('datetime')
         df = df.reset_index(drop=True)
+        return df
+
+    def get_daily_bars(self, days_back: int = 90) -> pd.DataFrame:
+        """Fetch daily bars directly from API for regime warmup."""
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days_back)
+        try:
+            data = self._post('/api/History/retrieveBars', {
+                'contractId': self.contract_id,
+                'startTime': start.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'endTime': end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                'unit': 4,
+                'unitNumber': 1,
+                'limit': 1000,
+                'live': False,
+                'includePartialBar': False,
+            })
+        except Exception as e:
+            log.warning(f"Daily bar fetch failed: {e}")
+            return pd.DataFrame()
+        bars = data.get('bars', [])
+        if not bars:
+            return pd.DataFrame()
+        df = pd.DataFrame(bars)
+        df = df.rename(columns={'t': 'date', 'o': 'open', 'h': 'high',
+                                'l': 'low', 'c': 'close', 'v': 'volume'})
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date').drop_duplicates('date').reset_index(drop=True)
         return df
 
     def get_latest_bars(self, n: int = 5) -> pd.DataFrame:
