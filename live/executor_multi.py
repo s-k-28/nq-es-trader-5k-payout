@@ -27,6 +27,8 @@ from data.loader import build_daily_bars
 from strategy.multi import MultiModelGenerator
 from strategy.models.base import Signal
 from live.broker_topstep import TopStepBroker, ORD_FILLED, ORD_CANCELLED, ORD_REJECTED, ORD_EXPIRED
+from live.reporter import HubReporter
+from live.alerts import TelegramAlerts
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +61,8 @@ class LiveExecutor:
     def __init__(self, cfg: Config, broker: TopStepBroker):
         self.cfg = cfg
         self.broker = broker
+        self.reporter = HubReporter()
+        self.alerts = TelegramAlerts()
 
         self.buf = pd.DataFrame()
         self.daily_df = pd.DataFrame()
@@ -106,6 +110,8 @@ class LiveExecutor:
                  f"Consec cooldown: {self.consec_cooldown}")
         log.info(f"Trailing DD: ${self.cfg.funded.trailing_dd:,.0f} | "
                  f"Static threshold: ${self.cfg.funded.static_threshold:,.0f}")
+        self.reporter.start()
+        self.alerts.bot_started(self.start_balance, 9)
         log.info("Waiting for signals...\n")
 
         while True:
@@ -130,6 +136,12 @@ class LiveExecutor:
             if self.trade:
                 log.info("Session close -- flattening")
                 self._close_trade('session_close')
+            if now.time() >= dt_time(15, 0) and now.time() < dt_time(15, 1):
+                trades_today = sum(1 for k in self.daily_model_count.values())
+                wins = max(0, int(trades_today * (0.5 + self.daily_r / max(trades_today, 1) * 0.1))) if trades_today > 0 else 0
+                self.alerts.daily_summary(
+                    trades_today, wins, self.daily_r,
+                    self.daily_pnl_usd, self.consec_losses)
             return
 
         latest = self.broker.get_latest_bars(10)
@@ -157,6 +169,8 @@ class LiveExecutor:
         self.daily_r = 0.0
         self.daily_pnl_usd = 0.0
         self.daily_model_count = {}
+        self._alerted_win_cap = False
+        self._alerted_dlc = False
 
         log.info(f"\n{'='*60}")
         log.info(f"New day: {today}")
@@ -179,6 +193,9 @@ class LiveExecutor:
         log.info(f"DD floor: ${floor:,.0f} ({'STATIC' if static else 'trailing'}) | "
                  f"Cushion: ${cushion:,.0f} | DD: ${dd:,.0f}")
         log.info(f"Green days: {self.green_days} | Trading days: {self.total_days}")
+
+        if cushion < 1000 and cushion > 0:
+            self.alerts.dd_warning(bal, self.peak_balance, dd, self.cfg.funded.trailing_dd)
 
         if self.green_days >= self.cfg.funded.green_days_per_payout and bal > self.start_balance:
             payout = min(self.cfg.funded.max_payout,
@@ -207,9 +224,15 @@ class LiveExecutor:
             return
 
         if self.daily_r >= self.daily_win_cap:
+            if not self._alerted_win_cap:
+                self.alerts.win_cap_hit(self.daily_r, self.daily_win_cap)
+                self._alerted_win_cap = True
             return
 
         if self.daily_pnl_usd <= -self.dollar_loss_cap:
+            if not self._alerted_dlc:
+                self.alerts.dlc_warning(self.daily_pnl_usd, self.dollar_loss_cap)
+                self._alerted_dlc = True
             return
 
         if self.consec_losses >= self.consec_cooldown:
@@ -380,6 +403,11 @@ class LiveExecutor:
             t.pending = False
             t.entry_time = datetime.now(CT)
             log.info(f"    FILLED -- {t.contracts} MNQ @ {t.entry_price:.2f}")
+            model_risk = self.cfg.funded.model_risk_dollars.get(t.signal.model, 600)
+            self.alerts.trade_entry(
+                t.signal.model, t.direction, t.entry_price,
+                t.stop_price, t.target_price, t.contracts,
+                t.signal.risk_ticks, model_risk)
             try:
                 exit_ids = self.broker.place_exit_bracket(
                     direction=t.direction,
@@ -440,6 +468,20 @@ class LiveExecutor:
         log.info(f"    Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f}) | "
                  f"Consec losses: {self.consec_losses}")
 
+        self.alerts.trade_exit(
+            t.signal.model, t.direction, total_r, pnl, reason,
+            self.daily_r, self.daily_pnl_usd)
+
+        self.reporter.report_trade({
+            'model': t.signal.model, 'direction': t.direction,
+            'entry': t.entry_price, 'stop': t.stop_price, 'target': t.target_price,
+            'risk_ticks': t.signal.risk_ticks, 'contracts': t.contracts,
+            'total_r': round(total_r, 3), 'pnl_usd': round(pnl, 2),
+            'reason': reason, 'entry_time': t.entry_time.isoformat(),
+            'exit_time': datetime.now(CT).isoformat(),
+            'daily_r': round(self.daily_r, 3), 'daily_pnl': round(self.daily_pnl_usd, 2),
+        })
+
         self._reset_trade()
 
     def _close_trade(self, reason: str):
@@ -479,6 +521,20 @@ class LiveExecutor:
         log.info(f"    Result: {total_r:+.2f}R (${pnl_usd:+,.0f}) | "
                  f"Daily: {self.daily_r:+.2f}R (${self.daily_pnl_usd:+,.0f})")
 
+        self.alerts.trade_exit(
+            t.signal.model, t.direction, total_r, pnl_usd, reason,
+            self.daily_r, self.daily_pnl_usd)
+
+        self.reporter.report_trade({
+            'model': t.signal.model, 'direction': t.direction,
+            'entry': t.entry_price, 'stop': t.stop_price, 'target': t.target_price,
+            'risk_ticks': t.signal.risk_ticks, 'contracts': t.contracts,
+            'total_r': round(total_r, 3), 'pnl_usd': round(pnl_usd, 2),
+            'reason': reason, 'entry_time': t.entry_time.isoformat(),
+            'exit_time': datetime.now(CT).isoformat(),
+            'daily_r': round(self.daily_r, 3), 'daily_pnl': round(self.daily_pnl_usd, 2),
+        })
+
         self._reset_trade()
 
     def shutdown(self):
@@ -490,4 +546,5 @@ class LiveExecutor:
                 log.info("Shutdown -- flattening open position")
                 self.broker.flatten()
             self._reset_trade()
+        self.alerts.bot_stopped("shutdown")
         log.info("Executor shutdown complete.")

@@ -67,18 +67,18 @@ class FundedAccountParams:
     eval_profit_target: float = 6000.0
     trailing_dd: float = 3000.0
     static_threshold: float = 3000.0
-    green_day_min: float = 200.0
-    max_payout: float = 2000.0
-    payout_balance_pct: float = 0.50
+    green_day_min: float = 150.0
+    max_payout: float = 5000.0
+    payout_balance_pct: float = 0.30
     green_days_per_payout: int = 5
-    dollar_loss_cap: float = 1200.0
+    dollar_loss_cap: float = 500.0
     post_static_scaling: list = field(default_factory=lambda: [
-        (3000, 1.25), (0, 1.0),
+        (3000, 1.0), (0, 1.0),
     ])
     model_risk_dollars: dict = field(default_factory=lambda: {
-        'ou_rev': 2500, 'pd_rev': 1200,
-        'vwap_rev': 600, 'ema_rev': 600, 'kalman_mom': 600,
-        'pm_mom': 600, 'sweep': 600, 'trend': 600, 'or_rev': 600,
+        'ou_rev': 2500, 'pd_rev': 900,
+        'vwap_rev': 400, 'ema_rev': 400, 'kalman_mom': 400,
+        'pm_mom': 400, 'sweep': 400, 'trend': 400, 'or_rev': 400,
     })
 
 

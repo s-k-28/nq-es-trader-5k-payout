@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NQ-ES Trader — Live Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#060607; --bg-card:#0C0C0E; --bg-raised:#121214; --bg-hover:#18181B;
+      --bg-muted:#0F0F11; --t-base:#EAEAED; --t-sec:#8A8A96; --t-dim:#55555F;
+      --border:#1E1E24; --border-soft:#161618;
+      --accent:#10B981; --accent-soft:#061F16;
+      --amber:#D97706; --amber-soft:#1C1306;
+      --red:#DC2626; --red-soft:#1C0A0A; --red-muted:#F87171;
+      --green:#10B981; --green-muted:#34D399;
+      --purple:#8B5CF6; --purple-soft:#140E24;
+      --shadow-card: 0 1px 3px rgb(0 0 0 / 0.5), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg); color: var(--t-base);
+      font-size: 13.5px; line-height: 1.55;
+      -webkit-font-smoothing: antialiased; min-height: 100vh;
+    }
+    @keyframes rise { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+    .header {
+      padding: 16px 28px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    }
+    .header-left { display: flex; align-items: center; gap: 12px; }
+    .header-mark {
+      width: 28px; height: 28px; border-radius: 7px;
+      background: var(--accent-soft); border: 1px solid rgba(16,185,129,0.15);
+      display: grid; place-items: center;
+    }
+    .header-mark svg { width: 14px; height: 14px; stroke: var(--accent); stroke-width: 2; fill: none; }
+    .header h1 {
+      font-family: 'Inter Tight', sans-serif;
+      font-size: 15px; font-weight: 700; margin: 0;
+      letter-spacing: -0.02em;
+    }
+    .header .sub { font-size: 11px; color: var(--t-dim); margin-top: 1px; }
+    .live-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
+      animation: pulse 2s ease infinite; display: inline-block; margin-right: 6px;
+    }
+    .header-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; font-weight: 500; padding: 4px 10px;
+      border-radius: 999px; letter-spacing: 0.02em;
+      background: var(--accent-soft); color: var(--accent);
+      border: 1px solid rgba(16,185,129,0.12);
+    }
+
+    .kpi-row {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 1px; background: var(--border-soft); border-bottom: 1px solid var(--border);
+    }
+    .kpi {
+      background: var(--bg); padding: 18px 24px;
+      animation: rise 500ms cubic-bezier(.2,.7,.2,1) both;
+    }
+    .kpi:nth-child(1) { animation-delay: 40ms; }
+    .kpi:nth-child(2) { animation-delay: 80ms; }
+    .kpi:nth-child(3) { animation-delay: 120ms; }
+    .kpi:nth-child(4) { animation-delay: 160ms; }
+    .kpi-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--t-dim); font-weight: 500; margin-bottom: 6px;
+    }
+    .kpi-val {
+      font-family: 'Inter Tight', sans-serif;
+      font-weight: 700; font-size: 26px; line-height: 1; letter-spacing: -0.035em;
+    }
+    .kpi-sub { font-size: 11px; color: var(--t-dim); margin-top: 5px; }
+    .pos { color: var(--green-muted); }
+    .neg { color: var(--red-muted); }
+    .amb { color: var(--amber); }
+
+    .content { display: grid; grid-template-columns: 320px 1fr; min-height: calc(100vh - 140px); }
+
+    .sidebar {
+      border-right: 1px solid var(--border); overflow-y: auto;
+      background: var(--bg-card);
+    }
+    .side-head {
+      padding: 14px 18px; border-bottom: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--t-dim); font-weight: 500;
+    }
+    .user-card {
+      padding: 14px 18px; border-bottom: 1px solid var(--border-soft);
+      cursor: pointer; transition: background 150ms;
+    }
+    .user-card:hover { background: var(--bg-hover); }
+    .user-card.active { background: var(--bg-raised); border-left: 2px solid var(--accent); }
+    .user-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .user-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .user-dot.online { background: var(--accent); animation: pulse 2s ease infinite; }
+    .user-dot.offline { background: var(--t-dim); }
+    .user-name {
+      font-weight: 600; font-size: 13px; color: var(--t-base);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .user-stats {
+      display: flex; gap: 14px;
+      font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+    }
+    .user-stats span { color: var(--t-sec); }
+
+    .main { overflow-y: auto; }
+    .main-head {
+      padding: 18px 24px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .main-head h2 {
+      font-family: 'Inter Tight', sans-serif;
+      font-weight: 700; font-size: 15px; margin: 0; letter-spacing: -0.015em;
+    }
+    .main-head .tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px; padding: 3px 8px; border-radius: 4px;
+      letter-spacing: 0.02em;
+    }
+    .tag.on { background: var(--accent-soft); color: var(--accent); }
+    .tag.off { background: var(--bg-muted); color: var(--t-dim); }
+
+    .trade-summary {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 1px; background: var(--border-soft); margin: 0;
+    }
+    .ts-cell {
+      background: var(--bg); padding: 14px 18px; text-align: center;
+    }
+    .ts-lbl {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--t-dim); margin-bottom: 4px;
+    }
+    .ts-val {
+      font-family: 'Inter Tight', sans-serif;
+      font-size: 20px; font-weight: 700; letter-spacing: -0.03em;
+    }
+
+    .tbl-wrap { width: 100%; overflow-x: auto; }
+    .tbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    .tbl thead th {
+      text-align: left; padding: 10px 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--t-dim); font-weight: 500;
+      border-bottom: 1px solid var(--border); background: var(--bg-muted);
+      position: sticky; top: 0; z-index: 1;
+    }
+    .tbl tbody td {
+      padding: 9px 14px; font-size: 12.5px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .tbl tbody tr { transition: background 120ms; }
+    .tbl tbody tr:hover td { background: var(--bg-hover); }
+    .m { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+
+    .model-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; font-weight: 500; padding: 2px 7px;
+      border-radius: 4px; letter-spacing: 0.02em;
+    }
+    .reason-tag {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px; padding: 2px 6px; border-radius: 3px;
+      letter-spacing: 0.02em;
+    }
+    .reason-tag.target { background: var(--accent-soft); color: var(--accent); }
+    .reason-tag.stop { background: var(--red-soft); color: var(--red-muted); }
+    .reason-tag.breakeven { background: var(--amber-soft); color: var(--amber); }
+    .reason-tag.time_stop { background: var(--purple-soft); color: var(--purple); }
+    .reason-tag.session_close { background: var(--bg-muted); color: var(--t-sec); }
+
+    .empty {
+      padding: 60px 24px; text-align: center; color: var(--t-dim); font-size: 13px;
+    }
+    .empty svg { width: 40px; height: 40px; stroke: var(--t-dim); stroke-width: 1.5; fill: none; margin-bottom: 12px; display: block; margin-left: auto; margin-right: auto; }
+
+    .refresh-bar {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 6px 28px; background: var(--bg-card);
+      border-top: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9.5px; color: var(--t-dim);
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    @media (max-width: 900px) {
+      .content { grid-template-columns: 1fr; }
+      .sidebar { max-height: 200px; border-right: 0; border-bottom: 1px solid var(--border); }
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
+      .trade-summary { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="header-mark">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    </div>
+    <div>
+      <h1><span class="live-dot"></span>Live Trading Hub</h1>
+      <div class="sub">NQ-ES Trader &middot; All connected bots</div>
+    </div>
+  </div>
+  <div class="header-tag" id="onlineTag">0 online</div>
+</div>
+
+<div class="kpi-row" id="kpiRow"></div>
+
+<div class="content">
+  <div class="sidebar">
+    <div class="side-head">Connected Users</div>
+    <div id="userList"></div>
+  </div>
+  <div class="main" id="mainPanel">
+    <div class="empty">
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Select a user to view their trades, or wait for bots to connect.
+    </div>
+  </div>
+</div>
+
+<div class="refresh-bar">
+  <span class="live-dot" style="width:6px;height:6px;"></span>
+  <span id="refreshStatus">Connecting...</span>
+</div>
+
+<script>
+const MODEL_COLORS = {
+  ou_rev:'#10B981', pd_rev:'#D97706', vwap_rev:'#34D399', or_rev:'#8B5CF6',
+  ema_rev:'#F87171', sweep:'#78716C', kalman_mom:'#14B8A6', trend:'#E11D48', pm_mom:'#94A3B8',
+};
+
+let selectedUser = null;
+let users = [];
+let refreshCount = 0;
+
+async function fetchJSON(path) {
+  const r = await fetch(path);
+  return r.json();
+}
+
+async function refresh() {
+  try {
+    const [stats, usersData] = await Promise.all([
+      fetchJSON('/api/stats'),
+      fetchJSON('/api/users'),
+    ]);
+    users = usersData;
+    renderKPI(stats);
+    renderUsers(usersData);
+    document.getElementById('onlineTag').textContent = `${stats.online_users} online`;
+    if (selectedUser) await loadUserTrades(selectedUser);
+    refreshCount++;
+    document.getElementById('refreshStatus').textContent =
+      `Live — refreshing every 15s (${new Date().toLocaleTimeString()})`;
+  } catch (e) {
+    document.getElementById('refreshStatus').textContent = `Connection error — retrying...`;
+  }
+}
+
+function renderKPI(s) {
+  document.getElementById('kpiRow').innerHTML = [
+    { l:'Online Users', v:s.online_users, s:'connected bots', c:s.online_users>0?'pos':'neg' },
+    { l:'Today Trades', v:s.today_trades, s:`avg ${s.today_avg_r>=0?'+':''}${s.today_avg_r.toFixed(3)}R`, c:s.today_trades>0?'pos':'neg' },
+    { l:'Today P&L', v:'$'+Math.round(s.today_pnl).toLocaleString(), s:'all users combined', c:s.today_pnl>=0?'pos':'neg' },
+    { l:'All-Time P&L', v:'$'+Math.round(s.total_pnl).toLocaleString(), s:s.total_trades+' total trades', c:s.total_pnl>=0?'pos':'neg' },
+  ].map(k=>`<div class="kpi"><div class="kpi-label">${k.l}</div><div class="kpi-val ${k.c}">${k.v}</div><div class="kpi-sub">${k.s}</div></div>`).join('');
+}
+
+function renderUsers(users) {
+  const el = document.getElementById('userList');
+  if (!users.length) {
+    el.innerHTML = '<div class="empty" style="padding:30px 18px;">No users connected yet.</div>';
+    return;
+  }
+  el.innerHTML = users.map(u => {
+    const pnlClass = u.total_pnl >= 0 ? 'pos' : 'neg';
+    const sign = u.total_pnl >= 0 ? '+' : '';
+    return `<div class="user-card ${selectedUser===u.user_id?'active':''}" onclick="selectUser('${u.user_id}')">
+      <div class="user-top">
+        <div class="user-dot ${u.online?'online':'offline'}"></div>
+        <div class="user-name">${u.user_id}</div>
+      </div>
+      <div class="user-stats">
+        <span>${u.total_trades} trades</span>
+        <span class="${pnlClass}">${sign}$${Math.round(Math.abs(u.total_pnl)).toLocaleString()}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function selectUser(uid) {
+  selectedUser = uid;
+  renderUsers(users);
+  await loadUserTrades(uid);
+}
+
+async function loadUserTrades(uid) {
+  const trades = await fetchJSON(`/api/trades?user=${uid}`);
+  const panel = document.getElementById('mainPanel');
+  const user = users.find(u => u.user_id === uid);
+
+  if (!trades.length) {
+    panel.innerHTML = `
+      <div class="main-head">
+        <h2>${uid}</h2>
+        <span class="tag ${user?.online?'on':'off'}">${user?.online?'ONLINE':'OFFLINE'}</span>
+      </div>
+      <div class="empty">No trades yet for this user.</div>`;
+    return;
+  }
+
+  const wins = trades.filter(t => t.total_r > 0).length;
+  const wr = (wins / trades.length * 100).toFixed(1);
+  const totalPnl = trades.reduce((s, t) => s + (t.pnl_usd || 0), 0);
+  const totalR = trades.reduce((s, t) => s + (t.total_r || 0), 0);
+  const avgR = (totalR / trades.length).toFixed(3);
+
+  let summaryHTML = `
+    <div class="main-head">
+      <h2>${uid}</h2>
+      <span class="tag ${user?.online?'on':'off'}">${user?.online?'ONLINE':'OFFLINE'}</span>
+    </div>
+    <div class="trade-summary">
+      <div class="ts-cell"><div class="ts-lbl">Trades</div><div class="ts-val">${trades.length}</div></div>
+      <div class="ts-cell"><div class="ts-lbl">Win Rate</div><div class="ts-val ${wins/trades.length>=0.5?'pos':'neg'}">${wr}%</div></div>
+      <div class="ts-cell"><div class="ts-lbl">Total P&L</div><div class="ts-val ${totalPnl>=0?'pos':'neg'}">${totalPnl>=0?'+':''}$${Math.round(Math.abs(totalPnl)).toLocaleString()}</div></div>
+      <div class="ts-cell"><div class="ts-lbl">Avg R</div><div class="ts-val ${totalR>=0?'pos':'neg'}">${totalR>=0?'+':''}${avgR}R</div></div>
+    </div>`;
+
+  let tableHTML = `<div class="tbl-wrap"><table class="tbl">
+    <thead><tr>
+      <th>Time</th><th>Model</th><th>Dir</th><th>Entry</th><th>Exit</th>
+      <th>Contracts</th><th>R</th><th>P&L</th><th>Reason</th><th>Daily P&L</th>
+    </tr></thead><tbody>`;
+
+  trades.forEach(t => {
+    const time = t.exit_time ? new Date(t.exit_time).toLocaleString('en-US', {
+      month:'short', day:'numeric', hour:'numeric', minute:'2-digit'
+    }) : '--';
+    const mc = MODEL_COLORS[t.model] || '#78716C';
+    const rClass = (t.total_r || 0) >= 0 ? 'pos' : 'neg';
+    const pClass = (t.pnl_usd || 0) >= 0 ? 'pos' : 'neg';
+    const dpClass = (t.daily_pnl || 0) >= 0 ? 'pos' : 'neg';
+    const reason = t.reason || '';
+
+    tableHTML += `<tr>
+      <td class="m" style="font-size:10.5px">${time}</td>
+      <td><span class="model-tag" style="background:${mc}22;color:${mc}">${t.model}</span></td>
+      <td class="m">${(t.direction||'').toUpperCase()}</td>
+      <td class="m">${(t.entry||0).toFixed(2)}</td>
+      <td class="m">${(t.target||0).toFixed(2)}</td>
+      <td class="m">${t.contracts||0}</td>
+      <td class="m ${rClass}">${(t.total_r||0)>=0?'+':''}${(t.total_r||0).toFixed(2)}R</td>
+      <td class="m ${pClass}">${(t.pnl_usd||0)>=0?'+':''}$${Math.round(Math.abs(t.pnl_usd||0)).toLocaleString()}</td>
+      <td><span class="reason-tag ${reason}">${reason}</span></td>
+      <td class="m ${dpClass}">${(t.daily_pnl||0)>=0?'+':''}$${Math.round(Math.abs(t.daily_pnl||0)).toLocaleString()}</td>
+    </tr>`;
+  });
+
+  tableHTML += '</tbody></table></div>';
+  panel.innerHTML = summaryHTML + tableHTML;
+}
+
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

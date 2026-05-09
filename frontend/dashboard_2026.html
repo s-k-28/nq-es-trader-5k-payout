@@ -3,604 +3,1066 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NQ Bot - 2026 Live Data Dashboard</title>
+  <title>NQ Quantitative Trading System — 2026 Performance</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="dashboard_data.js"></script>
   <style>
+    :root {
+      --bg: #06060b; --bg2: #0c0c14; --bg3: #12121e;
+      --border: #1a1a2e; --border2: #252540;
+      --text: #e0e0e0; --text2: #999; --text3: #555;
+      --green: #00e676; --red: #ff1744; --blue: #448aff;
+      --yellow: #ffd600; --purple: #b388ff; --orange: #ffab40;
+      --cyan: #18ffff; --pink: #ff80ab;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', system-ui, sans-serif;
-      background: #0a0a0f;
-      color: #e0e0e0;
-      min-height: 100vh;
+    body { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    .header { padding: 20px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .header h1 { font-size: 16px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+    .header .sub { font-size: 11px; color: var(--text3); margin-top: 3px; }
+    .badge { padding: 3px 10px; border-radius: 10px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+    .badge-live { background: #1b3a1b; color: var(--green); }
+    .badge-p10k { background: #1a237e; color: var(--blue); }
+
+    .tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--bg2); }
+    .tab { padding: 12px 24px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text3); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
+    .tab:hover { color: var(--text2); }
+    .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .kpi-row { display: grid; grid-template-columns: repeat(8, 1fr); gap: 1px; background: var(--border); }
+    .kpi { background: var(--bg); padding: 14px 16px; text-align: center; }
+    .kpi .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text3); margin-bottom: 3px; }
+    .kpi .val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .kpi .sub { font-size: 10px; color: var(--text3); margin-top: 2px; }
+
+    .section { padding: 20px 28px; border-bottom: 1px solid var(--border); }
+    .section h2 { font-size: 12px; color: var(--text3); margin-bottom: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; }
+
+    .chart-box { height: 360px; position: relative; }
+    .chart-box canvas { width: 100% !important; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); }
+    .grid-2 > div { background: var(--bg); }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px; background: var(--border); }
+    .grid-3 > div { background: var(--bg); }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); }
+    .grid-4 > div { background: var(--bg); }
+
+    .controls { padding: 10px 28px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .btn { padding: 5px 12px; border: 1px solid var(--border2); background: var(--bg3); color: var(--text2); border-radius: 4px; cursor: pointer; font-size: 11px; font-family: inherit; transition: all 0.12s; }
+    .btn:hover { border-color: var(--blue); color: #fff; }
+    .btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+    .model-pills { display: flex; gap: 4px; flex-wrap: wrap; }
+    .mpill { padding: 3px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; cursor: pointer; opacity: 0.35; transition: opacity 0.12s; border: 1px solid transparent; }
+    .mpill.active { opacity: 1; }
+    .mpill:hover { opacity: 0.8; }
+
+    table.dt { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+    table.dt th { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text3); font-weight: 600; text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+    table.dt td { padding: 6px 10px; border-bottom: 1px solid #0a0a12; }
+    table.dt tr:hover { background: var(--bg3); }
+    table.dt tr.expanded { background: var(--bg2); }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .neu { color: var(--text3); }
+
+    .trade-detail { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; margin: 4px 10px 8px; padding: 14px 18px; font-size: 11px; }
+    .trade-detail .td-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 16px; }
+    .trade-detail .td-item .td-label { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
+    .trade-detail .td-item .td-val { font-weight: 600; margin-top: 2px; }
+    .trade-detail .td-timeline { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+    .td-step { display: flex; gap: 12px; padding: 3px 0; }
+    .td-step .td-time { color: var(--text3); min-width: 60px; }
+    .td-step .td-event { font-weight: 600; }
+
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+    .cal-header { padding: 6px; text-align: center; font-size: 10px; color: var(--text3); font-weight: 600; }
+    .cal-cell { aspect-ratio: 1.4; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; transition: all 0.12s; border: 1px solid transparent; }
+    .cal-cell:hover { border-color: var(--blue); transform: scale(1.05); }
+    .cal-cell .cal-day { font-size: 10px; color: var(--text3); margin-bottom: 2px; }
+    .cal-cell.empty { cursor: default; }
+    .cal-cell.empty:hover { border-color: transparent; transform: none; }
+
+    .risk-card { background: var(--bg2); border-radius: 6px; padding: 16px; text-align: center; }
+    .risk-card .rc-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text3); margin-bottom: 4px; }
+    .risk-card .rc-val { font-size: 22px; font-weight: 700; }
+    .risk-card .rc-sub { font-size: 10px; color: var(--text3); margin-top: 3px; }
+
+    .funded-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border-radius: 8px; overflow: hidden; }
+    .funded-cell { background: var(--bg2); padding: 16px; text-align: center; }
+    .funded-cell .fc-label { font-size: 9px; text-transform: uppercase; color: var(--text3); letter-spacing: 0.5px; margin-bottom: 4px; }
+    .funded-cell .fc-val { font-size: 20px; font-weight: 700; }
+    .funded-cell .fc-sub { font-size: 10px; color: var(--text3); margin-top: 3px; }
+
+    .config-block { background: var(--bg2); border-radius: 6px; padding: 16px; font-size: 11px; }
+    .config-block .cfg-row { display: flex; justify-content: space-between; padding: 3px 0; border-bottom: 1px solid #0f0f18; }
+    .config-block .cfg-row:last-child { border-bottom: none; }
+    .config-block .cfg-k { color: var(--text3); }
+    .config-block .cfg-v { font-weight: 600; }
+
+    .scroll-table { max-height: 600px; overflow-y: auto; }
+    .scroll-table::-webkit-scrollbar { width: 6px; }
+    .scroll-table::-webkit-scrollbar-track { background: var(--bg); }
+    .scroll-table::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+    .day-detail-panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 16px; margin-top: 12px; }
+
+    @media (max-width: 900px) {
+      .kpi-row { grid-template-columns: repeat(4, 1fr); }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
     }
-    .header {
-      padding: 24px 32px;
-      border-bottom: 1px solid #1a1a2e;
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .header h1 { font-size: 20px; font-weight: 600; color: #fff; }
-    .header .subtitle { font-size: 13px; color: #666; margin-top: 2px; }
-    .header .badge {
-      background: #1b5e20; color: #69f0ae; padding: 4px 12px;
-      border-radius: 12px; font-size: 11px; font-weight: 600;
-    }
-    .stats-row {
-      display: flex; gap: 1px; background: #1a1a2e;
-      border-bottom: 1px solid #1a1a2e;
-    }
-    .stat-card {
-      flex: 1; background: #0a0a0f; padding: 16px 20px; text-align: center;
-    }
-    .stat-card .label {
-      font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
-      color: #666; margin-bottom: 4px;
-    }
-    .stat-card .value {
-      font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums;
-    }
-    .stat-card .sub { font-size: 11px; color: #555; margin-top: 2px; }
-    .green { color: #00c853; }
-    .red { color: #ff1744; }
-    .blue { color: #448aff; }
-    .white { color: #fff; }
-    .yellow { color: #ffd600; }
-    .section { padding: 24px 32px; border-bottom: 1px solid #1a1a2e; }
-    .section h2 {
-      font-size: 14px; color: #888; margin-bottom: 16px; font-weight: 500;
-      text-transform: uppercase; letter-spacing: 0.5px;
-    }
-    .chart-wrap { padding: 24px 32px; height: 400px; border-bottom: 1px solid #1a1a2e; }
-    .chart-wrap h2 {
-      font-size: 14px; color: #888; margin-bottom: 12px; font-weight: 500;
-      text-transform: uppercase; letter-spacing: 0.5px;
-    }
-    .chart-wrap canvas { width: 100% !important; }
-    .grid-2 {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
-      background: #1a1a2e; border-bottom: 1px solid #1a1a2e;
-    }
-    .grid-2 .chart-wrap { background: #0a0a0f; height: 340px; }
-    .controls {
-      padding: 12px 32px; display: flex; gap: 8px;
-      border-bottom: 1px solid #1a1a2e; align-items: center;
-    }
-    .controls label { font-size: 12px; color: #888; margin-right: 4px; }
-    .btn {
-      padding: 6px 14px; border: 1px solid #2a2a3e; background: #12121e;
-      color: #aaa; border-radius: 6px; cursor: pointer; font-size: 12px;
-      transition: all 0.15s;
-    }
-    .btn:hover { border-color: #448aff; color: #fff; }
-    .btn.active { background: #448aff; border-color: #448aff; color: #fff; }
-    .model-pills { display: flex; gap: 6px; }
-    .model-pill {
-      padding: 4px 10px; border-radius: 4px; font-size: 11px;
-      font-weight: 600; cursor: pointer; opacity: 0.4; transition: opacity 0.15s;
-    }
-    .model-pill.active { opacity: 1; }
-    .model-pill.ou { background: #1a237e; color: #82b1ff; }
-    .model-pill.vwap { background: #1b5e20; color: #69f0ae; }
-    .model-pill.trend { background: #e65100; color: #ffab40; }
-    table.data-table {
-      width: 100%; border-collapse: collapse; font-size: 12px;
-      font-variant-numeric: tabular-nums;
-    }
-    table.data-table th {
-      text-align: left; padding: 8px 12px; border-bottom: 1px solid #1a1a2e;
-      color: #666; font-weight: 500; text-transform: uppercase; font-size: 10px;
-      letter-spacing: 0.5px;
-    }
-    table.data-table td { padding: 8px 12px; border-bottom: 1px solid #0f0f18; }
-    table.data-table tr:hover { background: #0f0f18; }
-    td.pos { color: #00c853; }
-    td.neg { color: #ff1744; }
-    .funded-row {
-      display: grid; grid-template-columns: repeat(4, 1fr);
-      gap: 1px; background: #1a1a2e; border-radius: 8px; overflow: hidden;
-    }
-    .funded-cell {
-      background: #0f0f18; padding: 16px; text-align: center;
-    }
-    .funded-cell .label { font-size: 10px; text-transform: uppercase; color: #666; letter-spacing: 0.5px; margin-bottom: 4px; }
-    .funded-cell .value { font-size: 20px; font-weight: 700; }
-    .funded-cell .sub { font-size: 11px; color: #555; margin-top: 2px; }
-    .pipeline-grid {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
-      background: #1a1a2e; border-radius: 8px; overflow: hidden; margin-top: 16px;
-    }
-    .pipeline-stage {
-      background: #0f0f18; padding: 16px;
-    }
-    .pipeline-stage .stage-header {
-      font-size: 11px; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.5px; margin-bottom: 10px; padding-bottom: 6px;
-      border-bottom: 1px solid #1a1a2e;
-    }
-    .pipeline-stage .stage-row {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 3px 0; font-size: 12px;
-    }
-    .pipeline-stage .stage-row .k { color: #666; }
-    .pipeline-stage .stage-row .v { font-weight: 600; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
 
-  <div class="header">
-    <div>
-      <h1>NQ Trading Bot - 2026 Live Data</h1>
-      <div class="subtitle">MNQ 2026 (H26+M26) | Jan 2 - May 1, 2026 | q≥8 Filter | Flat 20 MNQ | Partial 30%</div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center">
-      <div class="model-pills" id="modelPills"></div>
-      <span class="badge">REAL DATA</span>
-    </div>
+<div class="header">
+  <div>
+    <h1>NQ Quantitative Trading System</h1>
+    <div class="sub">MNQ 2026 (H26+M26) | Jan 2 — May 1 | 9-Model Ensemble | Walk-Forward Validated</div>
   </div>
-
-  <div class="stats-row" id="statsRow"></div>
-
-  <div class="section">
-    <h2>TopStep Express 50K Pipeline</h2>
-    <div class="funded-row" id="fundedRow"></div>
-    <div class="pipeline-grid" id="pipelineGrid"></div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span class="badge badge-p10k" id="p10kBadge">P($10K) 97.90%</span>
+    <span class="badge badge-live">2026 OOS</span>
   </div>
+</div>
 
-  <div class="controls">
-    <label>Main Chart:</label>
+<div class="tabs" id="tabBar">
+  <div class="tab active" data-tab="overview">Overview</div>
+  <div class="tab" data-tab="trades">All Trades</div>
+  <div class="tab" data-tab="models">Model Analysis</div>
+  <div class="tab" data-tab="calendar">Calendar</div>
+  <div class="tab" data-tab="risk">Risk Analytics</div>
+  <div class="tab" data-tab="funded">Funded Account</div>
+</div>
+
+<!-- ============ OVERVIEW TAB ============ -->
+<div class="tab-content active" id="tab-overview">
+  <div class="kpi-row" id="kpiRow"></div>
+
+  <div class="controls" id="mainControls">
+    <span style="font-size:10px;color:var(--text3);margin-right:4px">CHART:</span>
     <button class="btn active" data-view="equity">Equity Curve</button>
     <button class="btn" data-view="daily">Daily P&L</button>
     <button class="btn" data-view="drawdown">Drawdown</button>
+    <button class="btn" data-view="cumR">Cumulative R</button>
+    <span style="margin-left:12px;font-size:10px;color:var(--text3)">MODELS:</span>
+    <div class="model-pills" id="modelPills"></div>
   </div>
 
-  <div class="chart-wrap">
-    <canvas id="mainChart"></canvas>
-  </div>
+  <div class="section" style="padding-bottom:0"><div class="chart-box"><canvas id="mainChart"></canvas></div></div>
 
-  <div class="chart-wrap" style="height:360px">
-    <h2>MNQ Daily Price (2026)</h2>
-    <canvas id="priceChart"></canvas>
+  <div class="grid-2">
+    <div class="section"><h2>MNQ Price + Trade Entries</h2><div class="chart-box"><canvas id="priceChart"></canvas></div></div>
+    <div class="section"><h2>R Distribution</h2><div class="chart-box"><canvas id="rHistChart"></canvas></div></div>
   </div>
 
   <div class="grid-2">
-    <div class="chart-wrap">
-      <h2>Per-Trade R by Model</h2>
-      <canvas id="tradeChart"></canvas>
-    </div>
-    <div class="chart-wrap">
-      <h2>Win/Loss by Model</h2>
-      <canvas id="modelBarChart"></canvas>
+    <div class="section"><h2>Cumulative R by Model</h2><div class="chart-box"><canvas id="cumRModelChart"></canvas></div></div>
+    <div class="section"><h2>Win/Loss by Model</h2><div class="chart-box"><canvas id="modelBarChart"></canvas></div></div>
+  </div>
+</div>
+
+<!-- ============ ALL TRADES TAB ============ -->
+<div class="tab-content" id="tab-trades">
+  <div class="controls">
+    <span style="font-size:10px;color:var(--text3);margin-right:4px">FILTER:</span>
+    <div class="model-pills" id="tradeModelPills"></div>
+    <span style="margin-left:12px;font-size:10px;color:var(--text3)">DIRECTION:</span>
+    <button class="btn active" data-dir="all">All</button>
+    <button class="btn" data-dir="long">Long</button>
+    <button class="btn" data-dir="short">Short</button>
+    <span style="margin-left:12px;font-size:10px;color:var(--text3)">RESULT:</span>
+    <button class="btn active" data-result="all">All</button>
+    <button class="btn" data-result="win">Wins</button>
+    <button class="btn" data-result="loss">Losses</button>
+  </div>
+  <div class="section" style="padding:0">
+    <div class="scroll-table">
+      <table class="dt" id="tradeTable">
+        <thead>
+          <tr>
+            <th>#</th><th>Date</th><th>Time</th><th>Model</th><th>Direction</th>
+            <th>Entry</th><th>Stop</th><th>Target</th><th>Exit</th>
+            <th>Risk (ticks)</th><th>R Multiple</th><th>$ P&L</th>
+            <th>Exit Reason</th><th>BE</th><th>Partial</th><th>Duration</th>
+          </tr>
+        </thead>
+        <tbody id="tradeBody"></tbody>
+      </table>
     </div>
   </div>
+</div>
 
+<!-- ============ MODEL ANALYSIS TAB ============ -->
+<div class="tab-content" id="tab-models">
   <div class="section">
-    <h2>Per-Model Breakdown</h2>
-    <table class="data-table" id="modelTable">
+    <h2>Model Performance Summary</h2>
+    <table class="dt" id="modelSummaryTable">
       <thead>
-        <tr><th>Model</th><th>Trades</th><th>Win Rate</th><th>PF</th><th>Avg R</th><th>Total R</th><th>Total $</th><th>Best</th><th>Worst</th></tr>
+        <tr>
+          <th>Model</th><th>Trades</th><th>Win Rate</th><th>PF</th>
+          <th>Avg R</th><th>Total R</th><th>Total $</th>
+          <th>Sharpe</th><th>Max DD ($)</th><th>Avg Duration</th>
+          <th>Best R</th><th>Worst R</th><th>Risk/Trade</th>
+        </tr>
       </thead>
-      <tbody></tbody>
+      <tbody id="modelSummaryBody"></tbody>
     </table>
   </div>
-
-  <div class="section">
-    <h2>All Trades</h2>
-    <table class="data-table" id="tradeTable">
-      <thead>
-        <tr><th>Date</th><th>Model</th><th>Dir</th><th>Entry</th><th>Exit</th><th>Risk</th><th>R</th><th>$ P&L</th><th>Exit Reason</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+  <div class="grid-2">
+    <div class="section"><h2>Model Contribution (% of Total P&L)</h2><div class="chart-box"><canvas id="modelPieChart"></canvas></div></div>
+    <div class="section"><h2>Model R Scatter</h2><div class="chart-box"><canvas id="modelScatterChart"></canvas></div></div>
   </div>
+  <div class="grid-2">
+    <div class="section"><h2>Model Equity Curves</h2><div class="chart-box"><canvas id="modelEquityChart"></canvas></div></div>
+    <div class="section"><h2>Trades Per Month by Model</h2><div class="chart-box"><canvas id="modelMonthlyChart"></canvas></div></div>
+  </div>
+</div>
+
+<!-- ============ CALENDAR TAB ============ -->
+<div class="tab-content" id="tab-calendar">
+  <div class="section">
+    <h2>Daily P&L Calendar</h2>
+    <div style="display:flex;gap:24px;flex-wrap:wrap" id="calendarContainer"></div>
+  </div>
+  <div class="section">
+    <h2>Day Detail</h2>
+    <div id="dayDetailPanel" class="day-detail-panel" style="color:var(--text3);font-size:12px">Click a calendar day to view trades</div>
+  </div>
+</div>
+
+<!-- ============ RISK ANALYTICS TAB ============ -->
+<div class="tab-content" id="tab-risk">
+  <div class="section">
+    <h2>Risk Metrics</h2>
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px" id="riskMetrics"></div>
+  </div>
+  <div class="grid-2">
+    <div class="section"><h2>Rolling 20-Day Sharpe</h2><div class="chart-box"><canvas id="rollingSharpeChart"></canvas></div></div>
+    <div class="section"><h2>Daily P&L Distribution</h2><div class="chart-box"><canvas id="dailyHistChart"></canvas></div></div>
+  </div>
+  <div class="grid-2">
+    <div class="section"><h2>Win/Loss Streaks</h2><div class="chart-box"><canvas id="streakChart"></canvas></div></div>
+    <div class="section"><h2>Underwater Equity</h2><div class="chart-box"><canvas id="underwaterChart"></canvas></div></div>
+  </div>
+</div>
+
+<!-- ============ FUNDED ACCOUNT TAB ============ -->
+<div class="tab-content" id="tab-funded">
+  <div class="section">
+    <h2>TopStep 100K Express — Pipeline Results</h2>
+    <div class="funded-grid" id="fundedKPIs"></div>
+  </div>
+  <div class="section">
+    <h2>Walk-Forward P($10K) — Monte Carlo 25K Trials</h2>
+    <div class="grid-3" style="gap:12px;background:transparent">
+      <div class="risk-card"><div class="rc-label">2023 OOS</div><div class="rc-val green" style="font-size:28px">93.54%</div><div class="rc-sub">P($10K in 60 cal days)</div></div>
+      <div class="risk-card"><div class="rc-label">2024 OOS</div><div class="rc-val green" style="font-size:28px">94.74%</div><div class="rc-sub">P($10K in 60 cal days)</div></div>
+      <div class="risk-card"><div class="rc-label">2025 OOS</div><div class="rc-val green" style="font-size:28px">96.46%</div><div class="rc-sub">P($10K in 60 cal days)</div></div>
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="section">
+      <h2>Account Configuration</h2>
+      <div class="config-block" id="configBlock"></div>
+    </div>
+    <div class="section">
+      <h2>Per-Model Risk Allocation</h2>
+      <div class="config-block" id="riskAllocBlock"></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2>TopStepX 2026 Rules</h2>
+    <div class="grid-3" style="gap:12px;background:transparent" id="rulesGrid"></div>
+  </div>
+</div>
 
 <script>
 const MODEL_COLORS = {
-  ou_rev:   { bg: 'rgba(68,138,255,0.8)',  line: '#448aff', fill: 'rgba(68,138,255,0.15)' },
-  vwap_rev: { bg: 'rgba(0,200,83,0.8)',    line: '#00c853', fill: 'rgba(0,200,83,0.15)' },
-  trend:    { bg: 'rgba(255,171,64,0.8)',   line: '#ffab40', fill: 'rgba(255,171,64,0.15)' },
+  ou_rev:     { bg: 'rgba(68,138,255,0.8)',  line: '#448aff' },
+  pd_rev:     { bg: 'rgba(179,136,255,0.8)', line: '#b388ff' },
+  vwap_rev:   { bg: 'rgba(0,230,118,0.8)',   line: '#00e676' },
+  ema_rev:    { bg: 'rgba(24,255,255,0.8)',   line: '#18ffff' },
+  kalman_mom: { bg: 'rgba(255,214,0,0.8)',    line: '#ffd600' },
+  pm_mom:     { bg: 'rgba(255,128,171,0.8)',  line: '#ff80ab' },
+  sweep:      { bg: 'rgba(255,171,64,0.8)',   line: '#ffab40' },
+  trend:      { bg: 'rgba(255,87,34,0.8)',    line: '#ff5722' },
+  or_rev:     { bg: 'rgba(129,199,132,0.8)',  line: '#81c784' },
 };
 
 const MNQ_TICK = 0.50;
-const BASE_QTY = 20;
 const MAX_TRADE_LOSS = 500;
 const DAILY_CAP = 500;
-const SLIP_SIZE_THRESHOLD = 50;
-const SLIP_SIZE_PCT = 0.50;
-const DD_SCALE_START = 1000;
-const DD_SCALE_FLOOR = 0.50;
-const STREAK_AFTER = 2;
-const STREAK_PCT = 0.75;
 
-const TRADES = [{"entry_time": "2026-01-05 10:57:00", "exit_time": "2026-01-05 11:03:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 25733.75, "exit": 25733.8125, "stop": 25742.25, "target": 25704.0, "risk_ticks": 34.36, "total_r": 0.2949, "exit_reason": "breakeven", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-01-13 10:03:00", "exit_time": "2026-01-13 10:09:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 26011.0, "exit": 26010.9375, "stop": 25993.75, "target": 26067.75, "risk_ticks": 68.92, "total_r": 0.2975, "exit_reason": "breakeven", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-01-13 10:19:00", "exit_time": "2026-01-13 10:20:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 25973.25, "exit": 25964.1875, "stop": 25964.25, "target": 26048.5, "risk_ticks": 36.28, "total_r": -1.0069, "exit_reason": "stop", "moved_be": false, "partial_taken": false}, {"entry_time": "2026-01-30 10:31:00", "exit_time": "2026-01-30 10:35:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 25939.75, "exit": 26018.0, "stop": 25919.5, "target": 26018.0, "risk_ticks": 80.32, "total_r": 3.8642, "exit_reason": "target", "moved_be": false, "partial_taken": false}, {"entry_time": "2026-02-13 10:36:00", "exit_time": "2026-02-13 10:46:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 25101.25, "exit": 24947.0, "stop": 25108.75, "target": 24947.0, "risk_ticks": 30.08, "total_r": 14.6967, "exit_reason": "target", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-02-20 10:24:00", "exit_time": "2026-02-20 10:26:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 25198.75, "exit": 25219.5625, "stop": 25219.5, "target": 25103.5, "risk_ticks": 82.56, "total_r": -1.003, "exit_reason": "stop", "moved_be": false, "partial_taken": false}, {"entry_time": "2026-02-27 10:12:00", "exit_time": "2026-02-27 10:24:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 25193.75, "exit": 25193.8125, "stop": 25207.5, "target": 25104.5, "risk_ticks": 54.84, "total_r": 0.2968, "exit_reason": "breakeven", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-03-02 10:17:00", "exit_time": "2026-03-02 10:32:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 25144.75, "exit": 25072.75, "stop": 25158.5, "target": 25072.75, "risk_ticks": 54.88, "total_r": 3.9655, "exit_reason": "target", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-03-06 10:28:00", "exit_time": "2026-03-06 10:29:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 24805.5, "exit": 24824.3125, "stop": 24824.25, "target": 24716.25, "risk_ticks": 75.0, "total_r": -1.0033, "exit_reason": "stop", "moved_be": false, "partial_taken": false}, {"entry_time": "2026-03-19 10:36:00", "exit_time": "2026-03-19 10:39:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 24522.5, "exit": 24449.75, "stop": 24541.0, "target": 24449.75, "risk_ticks": 74.0, "total_r": 3.0527, "exit_reason": "target", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-03-24 10:57:00", "exit_time": "2026-03-24 10:59:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 24318.0, "exit": 24230.25, "stop": 24333.75, "target": 24230.25, "risk_ticks": 63.0, "total_r": 4.2, "exit_reason": "target", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-04-01 10:43:00", "exit_time": "2026-04-01 10:47:00", "model": "ou_rev", "tag": "ou_rev_short", "direction": "short", "entry": 24203.75, "exit": 24203.8125, "stop": 24223.5, "target": 24146.25, "risk_ticks": 79.0, "total_r": 0.2978, "exit_reason": "breakeven", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-04-09 10:28:00", "exit_time": "2026-04-09 10:31:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 24974.75, "exit": 24974.6875, "stop": 24963.25, "target": 25035.5, "risk_ticks": 46.0, "total_r": 0.2962, "exit_reason": "breakeven", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-04-09 10:43:00", "exit_time": "2026-04-09 10:51:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 24990.25, "exit": 25027.75, "stop": 24976.5, "target": 25027.75, "risk_ticks": 55.0, "total_r": 2.2091, "exit_reason": "target", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-04-16 10:01:00", "exit_time": "2026-04-16 10:07:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 26308.0, "exit": 26354.75, "stop": 26288.25, "target": 26354.75, "risk_ticks": 79.0, "total_r": 1.957, "exit_reason": "target", "moved_be": true, "partial_taken": true}, {"entry_time": "2026-04-27 09:52:00", "exit_time": "2026-04-27 09:54:00", "model": "ou_rev", "tag": "ou_rev_long", "direction": "long", "entry": 27318.0, "exit": 27367.25, "stop": 27297.5, "target": 27367.25, "risk_ticks": 82.0, "total_r": 1.9817, "exit_reason": "target", "moved_be": true, "partial_taken": true}];
+const MODEL_RISK = {
+  ou_rev: 2500, pd_rev: 900, vwap_rev: 400, ema_rev: 400,
+  kalman_mom: 400, pm_mom: 400, sweep: 400, trend: 400, or_rev: 400,
+};
 
-const DAILY_BARS = [{"date": "2026-01-02", "open": 25782.01, "high": 25856.13, "low": 25339.68, "close": 25460.7, "volume": 0}, {"date": "2026-01-05", "open": 25729.0, "high": 25778.22, "low": 25610.69, "close": 25657.82, "volume": 0}, {"date": "2026-01-06", "open": 25719.17, "high": 25914.18, "low": 25684.85, "close": 25898.61, "volume": 0}, {"date": "2026-01-07", "open": 25876.48, "high": 26073.83, "low": 25850.83, "close": 25912.95, "volume": 0}, {"date": "2026-01-08", "open": 25874.06, "high": 25881.1, "low": 25656.71, "close": 25764.72, "volume": 0}, {"date": "2026-01-09", "open": 25776.56, "high": 26072.15, "low": 25713.08, "close": 26026.5, "volume": 0}, {"date": "2026-01-12", "open": 25875.54, "high": 26111.95, "low": 25861.15, "close": 26048.12, "volume": 0}, {"date": "2026-01-13", "open": 26039.65, "high": 26134.5, "low": 25901.09, "close": 26001.95, "volume": 0}, {"date": "2026-01-14", "open": 25833.88, "high": 25883.0, "low": 25521.39, "close": 25723.15, "volume": 0}, {"date": "2026-01-15", "open": 26027.55, "high": 26041.42, "low": 25777.95, "close": 25805.1, "volume": 0}, {"date": "2026-01-16", "open": 25970.28, "high": 25995.41, "low": 25701.26, "close": 25787.11, "volume": 0}, {"date": "2026-01-20", "open": 25409.1, "high": 25535.1, "low": 25206.22, "close": 25239.94, "volume": 0}, {"date": "2026-01-21", "open": 25301.54, "high": 25756.35, "low": 25246.42, "close": 25582.38, "volume": 0}, {"date": "2026-01-22", "open": 25806.42, "high": 25834.84, "low": 25656.03, "close": 25776.09, "volume": 0}, {"date": "2026-01-23", "open": 25759.43, "high": 25969.36, "low": 25691.86, "close": 25864.03, "volume": 0}, {"date": "2026-01-26", "open": 25889.83, "high": 26057.59, "low": 25837.06, "close": 25972.86, "volume": 0}, {"date": "2026-01-27", "open": 26113.1, "high": 26244.96, "low": 26052.19, "close": 26201.68, "volume": 0}, {"date": "2026-01-28", "open": 26385.52, "high": 26429.29, "low": 26236.95, "close": 26285.56, "volume": 0}, {"date": "2026-01-29", "open": 26292.93, "high": 26309.35, "low": 25675.22, "close": 26145.67, "volume": 0}, {"date": "2026-01-30", "open": 26000.17, "high": 26084.11, "low": 25713.28, "close": 25810.47, "volume": 0}, {"date": "2026-02-02", "open": 25749.11, "high": 26094.03, "low": 25735.83, "close": 25998.57, "volume": 0}, {"date": "2026-02-03", "open": 26071.74, "high": 26101.03, "low": 25366.1, "close": 25594.54, "volume": 0}, {"date": "2026-02-04", "open": 25495.31, "high": 25530.54, "low": 24930.55, "close": 25142.64, "volume": 0}, {"date": "2026-02-05", "open": 24863.47, "high": 25105.59, "low": 24702.4, "close": 24796.63, "volume": 0}, {"date": "2026-02-06", "open": 24904.27, "high": 25385.16, "low": 24871.02, "close": 25329.04, "volume": 0}, {"date": "2026-02-09", "open": 25205.72, "high": 25593.45, "low": 25127.53, "close": 25523.35, "volume": 0}, {"date": "2026-02-10", "open": 25569.9, "high": 25619.29, "low": 25367.07, "close": 25381.43, "volume": 0}, {"date": "2026-02-11", "open": 25591.8, "high": 25639.21, "low": 25232.59, "close": 25455.79, "volume": 0}, {"date": "2026-02-12", "open": 25516.47, "high": 25566.2, "low": 24892.63, "close": 24936.96, "volume": 0}, {"date": "2026-02-13", "open": 24912.05, "high": 25173.18, "low": 24762.56, "close": 24982.53, "volume": 0}, {"date": "2026-02-17", "open": 24815.62, "high": 25068.92, "low": 24633.73, "close": 24951.03, "volume": 0}, {"date": "2026-02-18", "open": 24994.74, "high": 25310.23, "low": 24946.22, "close": 25150.29, "volume": 0}, {"date": "2026-02-19", "open": 25021.79, "high": 25141.45, "low": 24940.19, "close": 25047.74, "volume": 0}, {"date": "2026-02-20", "open": 24886.1, "high": 25330.79, "low": 24882.34, "close": 25265.19, "volume": 0}, {"date": "2026-02-23", "open": 25187.36, "high": 25237.17, "low": 24866.87, "close": 24958.5, "volume": 0}, {"date": "2026-02-24", "open": 25013.95, "high": 25275.65, "low": 24892.59, "close": 25229.31, "volume": 0}, {"date": "2026-02-25", "open": 25391.62, "high": 25599.94, "low": 25391.51, "close": 25584.86, "volume": 0}, {"date": "2026-02-26", "open": 25533.56, "high": 25543.64, "low": 25071.24, "close": 25287.22, "volume": 0}, {"date": "2026-02-27", "open": 25058.56, "high": 25240.34, "low": 24997.2, "close": 25212.13, "volume": 0}, {"date": "2026-03-02", "open": 24847.87, "high": 25312.27, "low": 24823.75, "close": 25245.03, "volume": 0}, {"date": "2026-03-03", "open": 24744.8, "high": 25060.84, "low": 24561.43, "close": 24969.76, "volume": 0}, {"date": "2026-03-04", "open": 25101.94, "high": 25433.67, "low": 25025.5, "close": 25103.0, "volume": 231958}, {"date": "2026-03-05", "open": 25103.0, "high": 25208.25, "low": 24774.0, "close": 25108.75, "volume": 2438327}, {"date": "2026-03-06", "open": 25109.25, "high": 25141.5, "low": 24605.0, "close": 24660.75, "volume": 2510905}, {"date": "2026-03-08", "open": 24500.0, "high": 24500.0, "low": 23999.0, "close": 24093.5, "volume": 471525}, {"date": "2026-03-09", "open": 24093.5, "high": 25055.0, "low": 24086.0, "close": 24887.75, "volume": 2415122}, {"date": "2026-03-10", "open": 24888.75, "high": 25217.75, "low": 24862.5, "close": 25118.75, "volume": 2235772}, {"date": "2026-03-11", "open": 25119.0, "high": 25180.0, "low": 24696.25, "close": 24730.0, "volume": 2049293}, {"date": "2026-03-12", "open": 24728.75, "high": 24929.0, "low": 24491.5, "close": 24624.25, "volume": 2143023}, {"date": "2026-03-13", "open": 24624.75, "high": 24805.0, "low": 24333.75, "close": 24335.25, "volume": 2120482}, {"date": "2026-03-15", "open": 24493.5, "high": 24753.25, "low": 24490.0, "close": 24744.0, "volume": 95902}, {"date": "2026-03-16", "open": 24743.75, "high": 25032.75, "low": 24690.0, "close": 24791.5, "volume": 996006}, {"date": "2026-03-17", "open": 24790.25, "high": 25144.5, "low": 24729.0, "close": 25136.5, "volume": 1336283}, {"date": "2026-03-18", "open": 25137.0, "high": 25210.75, "low": 24560.5, "close": 24663.75, "volume": 1729295}, {"date": "2026-03-19", "open": 24663.75, "high": 24691.5, "low": 24324.25, "close": 24610.75, "volume": 2260724}, {"date": "2026-03-20", "open": 24611.0, "high": 24622.25, "low": 23970.75, "close": 24217.0, "volume": 1883576}, {"date": "2026-03-22", "open": 23914.0, "high": 24095.75, "low": 23888.0, "close": 23953.25, "volume": 340958}, {"date": "2026-03-23", "open": 23953.25, "high": 24763.5, "low": 23772.75, "close": 24276.0, "volume": 2256621}, {"date": "2026-03-24", "open": 24276.75, "high": 24547.75, "low": 24134.75, "close": 24380.25, "volume": 2186216}, {"date": "2026-03-25", "open": 24380.75, "high": 24540.0, "low": 24243.0, "close": 24380.0, "volume": 2007452}, {"date": "2026-03-26", "open": 24379.75, "high": 24385.75, "low": 23762.0, "close": 23895.5, "volume": 2108306}, {"date": "2026-03-27", "open": 23895.25, "high": 23975.75, "low": 23231.0, "close": 23255.0, "volume": 1751327}, {"date": "2026-03-29", "open": 23191.5, "high": 23306.25, "low": 23093.75, "close": 23295.25, "volume": 327632}, {"date": "2026-03-30", "open": 23295.75, "high": 23580.0, "low": 22960.5, "close": 23318.5, "volume": 2056596}, {"date": "2026-03-31", "open": 23319.25, "high": 24049.0, "low": 23234.0, "close": 23982.25, "volume": 2363408}, {"date": "2026-04-01", "open": 23982.25, "high": 24349.0, "low": 23815.0, "close": 23821.5, "volume": 2177504}, {"date": "2026-04-02", "open": 23821.25, "high": 24267.75, "low": 23666.5, "close": 24167.5, "volume": 1999050}, {"date": "2026-04-03", "open": 24167.25, "high": 24240.25, "low": 24105.75, "close": 24132.25, "volume": 124829}, {"date": "2026-04-05", "open": 24093.25, "high": 24326.5, "low": 23981.0, "close": 24212.0, "volume": 270239}, {"date": "2026-04-06", "open": 24213.0, "high": 24453.0, "low": 24152.5, "close": 24220.75, "volume": 1694382}, {"date": "2026-04-07", "open": 24221.25, "high": 25120.0, "low": 23941.5, "close": 25102.75, "volume": 2660474}, {"date": "2026-04-08", "open": 25103.0, "high": 25257.25, "low": 24926.5, "close": 25018.5, "volume": 2020894}, {"date": "2026-04-09", "open": 25019.25, "high": 25304.0, "low": 24953.0, "close": 25291.5, "volume": 1737536}, {"date": "2026-04-10", "open": 25291.25, "high": 25393.5, "low": 25203.25, "close": 25333.0, "volume": 1394298}, {"date": "2026-04-12", "open": 25004.25, "high": 25091.75, "low": 24914.5, "close": 25060.0, "volume": 270474}, {"date": "2026-04-13", "open": 25060.0, "high": 25618.75, "low": 25044.0, "close": 25583.25, "volume": 1584467}, {"date": "2026-04-14", "open": 25583.5, "high": 26044.25, "low": 25564.5, "close": 26022.0, "volume": 1510492}, {"date": "2026-04-15", "open": 26022.0, "high": 26466.0, "low": 25934.5, "close": 26443.25, "volume": 1609124}, {"date": "2026-04-16", "open": 26443.0, "high": 26562.75, "low": 26275.75, "close": 26459.25, "volume": 1854913}, {"date": "2026-04-17", "open": 26459.25, "high": 26883.0, "low": 26443.25, "close": 26842.0, "volume": 1800782}, {"date": "2026-04-19", "open": 26603.25, "high": 26715.0, "low": 26534.75, "close": 26679.0, "volume": 196787}, {"date": "2026-04-20", "open": 26679.25, "high": 26838.75, "low": 26569.0, "close": 26812.25, "volume": 1611765}, {"date": "2026-04-21", "open": 26812.25, "high": 26902.0, "low": 26551.75, "close": 26808.0, "volume": 2111721}, {"date": "2026-04-22", "open": 26808.0, "high": 27138.0, "low": 26768.5, "close": 26908.0, "volume": 1765430}, {"date": "2026-04-23", "open": 26908.0, "high": 27156.0, "low": 26680.0, "close": 27031.25, "volume": 2202682}, {"date": "2026-04-24", "open": 27031.25, "high": 27462.75, "low": 27015.25, "close": 27440.75, "volume": 1714582}, {"date": "2026-04-26", "open": 27404.0, "high": 27542.0, "low": 27343.75, "close": 27524.75, "volume": 201909}, {"date": "2026-04-27", "open": 27524.75, "high": 27540.0, "low": 27298.0, "close": 27409.75, "volume": 1562609}, {"date": "2026-04-28", "open": 27410.75, "high": 27439.5, "low": 27006.25, "close": 27283.75, "volume": 2036310}, {"date": "2026-04-29", "open": 27284.0, "high": 27623.0, "low": 27089.0, "close": 27409.75, "volume": 1932218}, {"date": "2026-04-30", "open": 27410.25, "high": 27673.75, "low": 27163.0, "close": 27642.5, "volume": 2141882}, {"date": "2026-05-01", "open": 27642.25, "high": 27917.5, "low": 27535.0, "close": 27782.75, "volume": 1560617}];
+const ALL_MODELS = Object.keys(MODEL_COLORS);
+let activeModels = new Set(ALL_MODELS);
+let tradeFilterModels = new Set(ALL_MODELS);
+let tradeFilterDir = 'all';
+let tradeFilterResult = 'all';
+let charts = {};
 
-function dynQty(riskTicks) {
-  return Math.min(BASE_QTY, Math.floor(MAX_TRADE_LOSS / (riskTicks * MNQ_TICK)));
+function dynQty(model, riskTicks) {
+  const riskDollars = MODEL_RISK[model] || 400;
+  return Math.max(1, Math.min(50, Math.floor(riskDollars / (riskTicks * MNQ_TICK))));
+}
+
+function pnl(t) {
+  return t.total_r * t.risk_ticks * dynQty(t.model, t.risk_ticks) * MNQ_TICK;
 }
 
 function computeDailyPnl(trades) {
-  const dailyMap = {};
+  const map = {};
   const sorted = [...trades].sort((a, b) => a.entry_time.localeCompare(b.entry_time));
-  let cumPnl = 0, peak = 0, consecLosing = 0;
-  const dates = [...new Set(sorted.map(t => t.entry_time.slice(0, 10)))].sort();
-  dates.forEach(d => {
-    const dayTrades = sorted.filter(t => t.entry_time.slice(0, 10) === d);
-    let dayPnl = 0;
-    const inStreak = consecLosing >= STREAK_AFTER;
-    dayTrades.forEach(t => {
-      let qty = dynQty(t.risk_ticks);
-      if (t.risk_ticks < SLIP_SIZE_THRESHOLD) qty = Math.max(1, Math.floor(qty * SLIP_SIZE_PCT));
-      if (inStreak) qty = Math.max(1, Math.floor(qty * STREAK_PCT));
-      const dd = peak - (cumPnl + dayPnl);
-      if (dd >= DD_SCALE_START) {
-        const ddRatio = Math.min(1.0, (dd - DD_SCALE_START) / 500);
-        const scale = 1.0 - (ddRatio * (1.0 - DD_SCALE_FLOOR));
-        qty = Math.max(1, Math.floor(qty * scale));
-      }
-      const potentialLoss = t.risk_ticks * qty * MNQ_TICK;
-      if (dayPnl - potentialLoss < -DAILY_CAP) return;
-      dayPnl += t.total_r * t.risk_ticks * qty * MNQ_TICK;
-    });
-    dailyMap[d] = dayPnl;
-    cumPnl += dayPnl;
-    if (cumPnl > peak) peak = cumPnl;
-    if (dayPnl < 0) consecLosing++;
-    else consecLosing = 0;
+  sorted.forEach(t => {
+    const d = t.entry_time.slice(0, 10);
+    if (!map[d]) map[d] = 0;
+    const p = pnl(t);
+    if (map[d] + p < -DAILY_CAP && p < 0) return;
+    map[d] += p;
   });
-  return dailyMap;
+  return map;
 }
 
-let activeModels = new Set(['ou_rev', 'vwap_rev', 'trend']);
-let activeView = 'equity';
-let mainChart, priceChart, tradeChart, modelBarChart;
-
-function getFiltered() {
-  return TRADES.filter(t => activeModels.has(t.model));
+function duration(t) {
+  const ms = new Date(t.exit_time) - new Date(t.entry_time);
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return mins + 'm';
+  return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
 }
 
-function calcStats(trades) {
+function filtered() { return TRADES.filter(t => activeModels.has(t.model)); }
+
+function stats(trades) {
+  if (!trades.length) return null;
   const n = trades.length;
-  if (!n) return null;
-  const wins = trades.filter(x => x.total_r > 0).length;
+  const wins = trades.filter(t => t.total_r > 0).length;
   const wr = wins / n;
-  const totalR = trades.reduce((s, x) => s + x.total_r, 0);
+  const totalR = trades.reduce((s, t) => s + t.total_r, 0);
   const avgR = totalR / n;
-  const grossWin = trades.filter(x => x.total_r > 0).reduce((s, x) => s + x.total_r, 0);
-  const grossLoss = Math.abs(trades.filter(x => x.total_r <= 0).reduce((s, x) => s + x.total_r, 0));
-  const pf = grossLoss > 0 ? grossWin / grossLoss : 99;
-  const days = new Set(trades.map(x => x.entry_time.slice(0, 10))).size;
-  const dailyMap = computeDailyPnl(trades);
+  const gw = trades.filter(t => t.total_r > 0).reduce((s, t) => s + t.total_r, 0);
+  const gl = Math.abs(trades.filter(t => t.total_r <= 0).reduce((s, t) => s + t.total_r, 0));
+  const pf = gl > 0 ? gw / gl : 99;
+  const dm = computeDailyPnl(trades);
+  const dates = Object.keys(dm).sort();
   let cum = 0, peak = 0, maxDD = 0;
-  Object.keys(dailyMap).sort().forEach(d => {
-    cum += dailyMap[d];
+  const dailyPnls = [];
+  dates.forEach(d => {
+    cum += dm[d]; dailyPnls.push(dm[d]);
     if (cum > peak) peak = cum;
-    const dd = cum - peak;
-    if (dd < maxDD) maxDD = dd;
+    if (cum - peak < maxDD) maxDD = cum - peak;
   });
-  const totalUsd = Object.values(dailyMap).reduce((s, v) => s + v, 0);
-  return { n, wins, wr, totalR, avgR, pf, days, maxDD, totalUsd };
+  const totalUsd = cum;
+  const mean = dailyPnls.reduce((s, v) => s + v, 0) / dailyPnls.length;
+  const std = Math.sqrt(dailyPnls.reduce((s, v) => s + (v - mean) ** 2, 0) / dailyPnls.length);
+  const sharpe = std > 0 ? (mean / std) * Math.sqrt(252) : 0;
+  const downside = dailyPnls.filter(v => v < 0);
+  const dstd = downside.length > 0 ? Math.sqrt(downside.reduce((s, v) => s + v * v, 0) / downside.length) : 1;
+  const sortino = (mean / dstd) * Math.sqrt(252);
+  const calmar = maxDD !== 0 ? (totalUsd / Math.abs(maxDD)) : 99;
+  const greenDays = dailyPnls.filter(v => v >= 150).length;
+  return { n, wins, wr, totalR, avgR, pf, maxDD, totalUsd, sharpe, sortino, calmar, greenDays, days: dates.length, dailyPnls, dates };
 }
 
+// ======================== INIT ========================
 function init() {
-  const pills = document.getElementById('modelPills');
-  ['ou_rev', 'vwap_rev', 'trend'].forEach(m => {
+  setupTabs();
+  setupModelPills('modelPills', activeModels, () => renderOverview());
+  setupModelPills('tradeModelPills', tradeFilterModels, () => renderTradesTab());
+  setupTradeFilters();
+  renderOverview();
+  renderTradesTab();
+  renderModelsTab();
+  renderCalendarTab();
+  renderRiskTab();
+  renderFundedTab();
+}
+
+function setupTabs() {
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    };
+  });
+}
+
+function setupModelPills(containerId, modelSet, onChange) {
+  const el = document.getElementById(containerId);
+  ALL_MODELS.forEach(m => {
     const pill = document.createElement('span');
-    pill.className = `model-pill ${m.replace('_rev','').replace('_','')} active`;
-    pill.textContent = m.toUpperCase().replace('_REV','').replace('_',' ');
+    pill.className = 'mpill active';
+    pill.style.background = MODEL_COLORS[m].bg.replace('0.8', '0.2');
+    pill.style.color = MODEL_COLORS[m].line;
+    pill.textContent = m.replace('_rev', '').replace('_mom', '').toUpperCase();
     pill.dataset.model = m;
     pill.onclick = () => {
-      if (activeModels.has(m)) {
-        if (activeModels.size === 1) return;
-        activeModels.delete(m); pill.classList.remove('active');
+      if (modelSet.has(m)) {
+        if (modelSet.size <= 1) return;
+        modelSet.delete(m); pill.classList.remove('active');
       } else {
-        activeModels.add(m); pill.classList.add('active');
+        modelSet.add(m); pill.classList.add('active');
       }
-      renderAll();
+      onChange();
     };
-    pills.appendChild(pill);
+    el.appendChild(pill);
   });
-  document.querySelectorAll('[data-view]').forEach(btn => {
+}
+
+function setupTradeFilters() {
+  document.querySelectorAll('[data-dir]').forEach(btn => {
     btn.onclick = () => {
-      document.querySelectorAll('[data-view]').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('[data-dir]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      activeView = btn.dataset.view;
-      renderMainChart();
+      tradeFilterDir = btn.dataset.dir;
+      renderTradesTab();
     };
   });
-  renderAll();
-  renderPriceChart();
+  document.querySelectorAll('[data-result]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('[data-result]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      tradeFilterResult = btn.dataset.result;
+      renderTradesTab();
+    };
+  });
 }
 
-function renderAll() {
-  const t = getFiltered();
-  renderStats(t);
-  renderMainChart();
-  renderTradeChart(t);
-  renderModelBarChart(t);
-  renderModelTable(t);
-  renderTradeTable(t);
-  renderFunded(t);
+// ======================== CHART HELPERS ========================
+function destroyChart(name) { if (charts[name]) { charts[name].destroy(); charts[name] = null; } }
+function baseOpts(yLabel, hideX) {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#ccc', borderColor: '#2a2a3e', borderWidth: 1 } },
+    scales: {
+      x: { display: !hideX, ticks: { color: '#444', maxRotation: 0, font: { size: 9 } }, grid: { color: '#0f0f18' } },
+      y: { title: { display: true, text: yLabel, color: '#666', font: { size: 10 } }, ticks: { color: '#444', font: { size: 9 } }, grid: { color: '#0f0f18' } }
+    }
+  };
 }
 
-function renderStats(trades) {
-  const s = calcStats(trades);
+// ======================== OVERVIEW TAB ========================
+function renderOverview() {
+  const t = filtered();
+  const s = stats(t);
   if (!s) return;
-  document.getElementById('statsRow').innerHTML = [
-    { label: 'Trades', value: s.n, cls: 'white' },
-    { label: 'Win Rate', value: (s.wr*100).toFixed(1)+'%', cls: s.wr >= 0.55 ? 'green' : 'red' },
-    { label: 'Profit Factor', value: s.pf.toFixed(2), cls: s.pf >= 1.5 ? 'green' : 'red' },
-    { label: 'Total R', value: (s.totalR>=0?'+':'')+s.totalR.toFixed(1)+'R', cls: s.totalR >= 0 ? 'green' : 'red' },
-    { label: 'Total $', value: '$'+(s.totalUsd>=0?'+':'')+Math.round(s.totalUsd).toLocaleString(), cls: s.totalUsd >= 0 ? 'green' : 'red' },
-    { label: 'Expectancy', value: (s.avgR>=0?'+':'')+s.avgR.toFixed(3)+'R', cls: s.avgR >= 0 ? 'green' : 'red' },
-    { label: 'Max DD', value: '$'+Math.round(s.maxDD).toLocaleString(), cls: 'red' },
-    { label: 'Days', value: s.days, cls: 'blue' },
-  ].map(x => `<div class="stat-card"><div class="label">${x.label}</div><div class="value ${x.cls}">${x.value}</div></div>`).join('');
+
+  document.getElementById('kpiRow').innerHTML = [
+    { l: 'Total P&L', v: '$' + Math.round(s.totalUsd).toLocaleString(), c: s.totalUsd >= 0 ? 'pos' : 'neg' },
+    { l: 'Trades', v: s.n, c: '' },
+    { l: 'Win Rate', v: (s.wr * 100).toFixed(1) + '%', c: s.wr >= 0.45 ? 'pos' : 'neg' },
+    { l: 'Profit Factor', v: s.pf.toFixed(2), c: s.pf >= 1.5 ? 'pos' : 'neg' },
+    { l: 'Total R', v: (s.totalR >= 0 ? '+' : '') + s.totalR.toFixed(1) + 'R', c: s.totalR >= 0 ? 'pos' : 'neg' },
+    { l: 'Sharpe (ann)', v: s.sharpe.toFixed(2), c: s.sharpe >= 1.5 ? 'pos' : 'neg' },
+    { l: 'Max DD', v: '$' + Math.round(Math.abs(s.maxDD)).toLocaleString(), c: 'neg' },
+    { l: 'Green Days', v: s.greenDays + ' / ' + s.days, c: s.greenDays >= 5 ? 'pos' : 'neg' },
+  ].map(x => `<div class="kpi"><div class="label">${x.l}</div><div class="val ${x.c}">${x.v}</div></div>`).join('');
+
+  renderMainChart(t, s);
+  renderPriceChart(t);
+  renderRHistChart(t);
+  renderCumRModelChart(t);
+  renderModelBarChart(t);
+
+  document.querySelectorAll('#mainControls [data-view]').forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll('#mainControls [data-view]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderMainChart(filtered(), stats(filtered()), btn.dataset.view);
+    };
+  });
 }
 
-function renderFunded(trades) {
-  document.getElementById('fundedRow').innerHTML = [
-    { label: 'Config', value: '20 MNQ', cls: 'blue', sub: 'Flat sizing, q≥8 filter' },
-    { label: 'Eval Pass (MC)', value: '87.2%', cls: 'green', sub: '$3K target, $2K trail DD' },
-    { label: 'XFA Survival', value: '96.8%', cls: 'green', sub: '$2K trail DD, static at $0' },
-    { label: 'Pipeline', value: '84.3%', cls: 'green', sub: 'Eval → XFA end-to-end' },
-  ].map(s => `<div class="funded-cell"><div class="label">${s.label}</div><div class="value ${s.cls}">${s.value}</div><div class="sub">${s.sub}</div></div>`).join('');
-
-  const stageRow = (k, v, cls) => `<div class="stage-row"><span class="k">${k}</span><span class="v ${cls||''}">${v}</span></div>`;
-  document.getElementById('pipelineGrid').innerHTML = `
-    <div class="pipeline-stage">
-      <div class="stage-header" style="color:#448aff">Stage 1: Evaluation</div>
-      ${stageRow('Profit Target', '$3,000')}
-      ${stageRow('Max Loss', '$2,000 EOD trailing')}
-      ${stageRow('Consistency', '50% rule')}
-      ${stageRow('Daily Limit', '$1,000')}
-      ${stageRow('MC Pass Rate', '87.2%', 'green')}
-      ${stageRow('Avg Days', '~10 trading days', 'green')}
-      ${stageRow('Blow Rate', '4.9%', 'green')}
-    </div>
-    <div class="pipeline-stage">
-      <div class="stage-header" style="color:#ffab40">Stage 2: XFA Funded</div>
-      ${stageRow('Start Balance', '$0')}
-      ${stageRow('Max Loss', '$2,000 EOD trailing')}
-      ${stageRow('DD Lock', 'Static at $0 when bal≥$2K')}
-      ${stageRow('Survival (20d)', '96.8%', 'green')}
-      ${stageRow('Avg Balance', '$8,224', 'green')}
-      ${stageRow('Blow Rate', '3.2%', 'green')}
-    </div>
-    <div class="pipeline-stage">
-      <div class="stage-header" style="color:#69f0ae">Stage 3: Payouts</div>
-      ${stageRow('Win Days Needed', '5 days ≥$150')}
-      ${stageRow('Payout Cap', '$2,000 max')}
-      ${stageRow('Max %', '≤50% of balance')}
-      ${stageRow('60d Avg Extracted', '$10,428', 'green')}
-      ${stageRow('60d Avg Payouts', '5.38', 'green')}
-      ${stageRow('60d Balance Left', '$15,110', 'green')}
-      ${stageRow('Got Payouts', '97%', 'green')}
-    </div>`;
-}
-
-function renderMainChart() {
-  if (mainChart) mainChart.destroy();
+function renderMainChart(trades, s, view) {
+  if (!view) view = document.querySelector('#mainControls [data-view].active')?.dataset.view || 'equity';
+  destroyChart('main');
   const ctx = document.getElementById('mainChart').getContext('2d');
-  const trades = getFiltered();
-  if (!trades.length) return;
-  const dailyMap = computeDailyPnl(trades);
-  const dates = Object.keys(dailyMap).sort();
+  const dm = computeDailyPnl(trades);
+  const dates = Object.keys(dm).sort();
 
-  if (activeView === 'equity') {
+  if (view === 'equity') {
     let cum = 0;
-    const data = dates.map(d => { cum += dailyMap[d]; return { x: d, y: Math.round(cum) }; });
-    mainChart = new Chart(ctx, {
+    const data = dates.map(d => { cum += dm[d]; return { x: d, y: Math.round(cum) }; });
+    charts.main = new Chart(ctx, {
       type: 'line',
-      data: { datasets: [{
-        data, borderColor: '#448aff', backgroundColor: 'rgba(68,138,255,0.08)',
-        fill: true, borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#448aff', tension: 0.2,
-      }]},
-      options: mkOpts('Equity ($)', false),
+      data: { datasets: [{ data, borderColor: '#448aff', backgroundColor: 'rgba(68,138,255,0.06)', fill: true, borderWidth: 2, pointRadius: 2, pointBackgroundColor: '#448aff', tension: 0.2 }] },
+      options: { ...baseOpts('Equity ($)'), scales: { ...baseOpts('Equity ($)').scales, x: { type: 'time', time: { unit: 'week' }, ticks: { color: '#444', font: { size: 9 } }, grid: { color: '#0f0f18' } } } }
     });
-  } else if (activeView === 'daily') {
-    const data = dates.map(d => Math.round(dailyMap[d]));
-    mainChart = new Chart(ctx, {
+  } else if (view === 'daily') {
+    const data = dates.map(d => Math.round(dm[d]));
+    charts.main = new Chart(ctx, {
       type: 'bar',
-      data: { labels: dates, datasets: [{
-        data, backgroundColor: data.map(v => v >= 0 ? 'rgba(0,200,83,0.7)' : 'rgba(255,23,68,0.7)'),
-        borderRadius: 3,
-      }]},
-      options: mkOpts('Daily $ P&L', true),
+      data: { labels: dates, datasets: [{ data, backgroundColor: data.map(v => v >= 0 ? 'rgba(0,230,118,0.6)' : 'rgba(255,23,68,0.6)'), borderRadius: 2 }] },
+      options: baseOpts('Daily $ P&L')
+    });
+  } else if (view === 'drawdown') {
+    let cum = 0, peak = 0;
+    const data = dates.map(d => { cum += dm[d]; if (cum > peak) peak = cum; return { x: d, y: Math.round(cum - peak) }; });
+    charts.main = new Chart(ctx, {
+      type: 'line',
+      data: { datasets: [{ data, borderColor: '#ff1744', backgroundColor: 'rgba(255,23,68,0.1)', fill: true, borderWidth: 2, pointRadius: 1, tension: 0.2 }] },
+      options: { ...baseOpts('Drawdown ($)'), scales: { ...baseOpts('Drawdown ($)').scales, x: { type: 'time', time: { unit: 'week' }, ticks: { color: '#444', font: { size: 9 } }, grid: { color: '#0f0f18' } } } }
     });
   } else {
-    let cum = 0, peak = 0;
-    const data = dates.map(d => {
-      cum += dailyMap[d]; if (cum > peak) peak = cum;
-      return { x: d, y: Math.round(cum - peak) };
-    });
-    mainChart = new Chart(ctx, {
+    let cum = 0;
+    const data = trades.sort((a, b) => a.entry_time.localeCompare(b.entry_time)).map((t, i) => { cum += t.total_r; return { x: i + 1, y: +cum.toFixed(2) }; });
+    charts.main = new Chart(ctx, {
       type: 'line',
-      data: { datasets: [{
-        data, borderColor: '#ff1744', backgroundColor: 'rgba(255,23,68,0.15)',
-        fill: true, borderWidth: 2, pointRadius: 2, tension: 0.2,
-      }]},
-      options: mkOpts('Drawdown ($)', false),
+      data: { datasets: [{ data, borderColor: '#b388ff', backgroundColor: 'rgba(179,136,255,0.06)', fill: true, borderWidth: 2, pointRadius: 1, tension: 0.2 }] },
+      options: baseOpts('Cumulative R')
     });
   }
 }
 
-function renderPriceChart() {
+function renderPriceChart(trades) {
+  destroyChart('price');
   const ctx = document.getElementById('priceChart').getContext('2d');
   const dates = DAILY_BARS.map(b => b.date);
   const closes = DAILY_BARS.map(b => b.close);
-  const highs = DAILY_BARS.map(b => b.high);
-  const lows = DAILY_BARS.map(b => b.low);
 
-  const tradeMarkers = TRADES.map(t => ({
-    x: t.entry_time.slice(0, 10),
-    y: t.entry,
-    r: t.total_r,
-    dir: t.direction,
-    model: t.model,
-  }));
+  const winPts = trades.filter(t => t.total_r > 0).map(t => ({ x: t.entry_time.slice(0, 10), y: t.entry }));
+  const lossPts = trades.filter(t => t.total_r <= 0).map(t => ({ x: t.entry_time.slice(0, 10), y: t.entry }));
 
-  priceChart = new Chart(ctx, {
+  charts.price = new Chart(ctx, {
     type: 'line',
     data: {
       labels: dates,
       datasets: [
-        {
-          label: 'High', data: highs,
-          borderColor: 'rgba(0,200,83,0.2)', backgroundColor: 'rgba(0,200,83,0.05)',
-          fill: '+1', borderWidth: 1, pointRadius: 0, tension: 0.2,
-        },
-        {
-          label: 'Close', data: closes,
-          borderColor: '#448aff', borderWidth: 2, pointRadius: 2,
-          pointBackgroundColor: '#448aff', tension: 0.2, fill: false,
-        },
-        {
-          label: 'Low', data: lows,
-          borderColor: 'rgba(255,23,68,0.2)', borderWidth: 1, pointRadius: 0, tension: 0.2,
-          fill: false,
-        },
-      ],
+        { label: 'MNQ Close', data: closes, borderColor: '#448aff', borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false, order: 2 },
+        { label: 'Win Entry', data: winPts, type: 'scatter', backgroundColor: 'rgba(0,230,118,0.8)', pointRadius: 4, pointStyle: 'triangle', order: 1 },
+        { label: 'Loss Entry', data: lossPts, type: 'scatter', backgroundColor: 'rgba(255,23,68,0.8)', pointRadius: 4, pointStyle: 'crossRot', order: 1 },
+      ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { labels: { color: '#888', font: { size: 10 } } },
-        tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#ccc', borderColor: '#2a2a3e', borderWidth: 1 },
-      },
-      scales: {
-        x: { ticks: { color: '#444', maxRotation: 45, font: { size: 9 } }, grid: { color: '#111' } },
-        y: { title: { display: true, text: 'MNQ Price', color: '#666' }, ticks: { color: '#444' }, grid: { color: '#111' } },
-      },
-    },
+      plugins: { legend: { labels: { color: '#888', font: { size: 9 } } }, tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#ccc' } },
+      scales: { x: { ticks: { color: '#444', maxRotation: 45, font: { size: 8 } }, grid: { color: '#0f0f18' } }, y: { ticks: { color: '#444' }, grid: { color: '#0f0f18' } } }
+    }
   });
 }
 
-function renderTradeChart(trades) {
-  if (tradeChart) tradeChart.destroy();
-  const ctx = document.getElementById('tradeChart').getContext('2d');
-  if (!trades.length) return;
-
-  const datasets = [...activeModels].map(m => {
-    const mt = trades.filter(t => t.model === m);
-    return {
-      label: m.toUpperCase().replace('_REV',''),
-      data: mt.map((t, i) => t.total_r),
-      backgroundColor: mt.map(t => t.total_r >= 0
-        ? (MODEL_COLORS[m]?.bg || 'rgba(150,150,150,0.8)')
-        : 'rgba(255,23,68,0.5)'),
-      borderRadius: 2,
-    };
-  });
-
-  tradeChart = new Chart(ctx, {
+function renderRHistChart(trades) {
+  destroyChart('rHist');
+  const ctx = document.getElementById('rHistChart').getContext('2d');
+  const rs = trades.map(t => t.total_r);
+  const bins = [];
+  for (let b = -3; b <= 6; b += 0.5) bins.push(b);
+  const counts = bins.map(b => rs.filter(r => r >= b && r < b + 0.5).length);
+  charts.rHist = new Chart(ctx, {
     type: 'bar',
-    data: { labels: trades.map((_, i) => i + 1), datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#888', font: { size: 10 } } } },
-      scales: {
-        x: { stacked: false, ticks: { color: '#444', font: { size: 9 } }, grid: { display: false } },
-        y: { title: { display: true, text: 'R Multiple', color: '#666' }, ticks: { color: '#444' }, grid: { color: '#111' } },
-      },
-    },
+    data: { labels: bins.map(b => b.toFixed(1) + 'R'), datasets: [{ data: counts, backgroundColor: bins.map(b => b >= 0 ? 'rgba(0,230,118,0.5)' : 'rgba(255,23,68,0.5)'), borderRadius: 2 }] },
+    options: baseOpts('Count')
+  });
+}
+
+function renderCumRModelChart(trades) {
+  destroyChart('cumRModel');
+  const ctx = document.getElementById('cumRModelChart').getContext('2d');
+  const datasets = [];
+  ALL_MODELS.forEach(m => {
+    if (!activeModels.has(m)) return;
+    const mt = trades.filter(t => t.model === m).sort((a, b) => a.entry_time.localeCompare(b.entry_time));
+    if (!mt.length) return;
+    let cum = 0;
+    datasets.push({
+      label: m.replace('_rev', '').replace('_mom', '').toUpperCase(),
+      data: mt.map((t, i) => { cum += t.total_r; return { x: i + 1, y: +cum.toFixed(2) }; }),
+      borderColor: MODEL_COLORS[m].line, borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false
+    });
+  });
+  charts.cumRModel = new Chart(ctx, {
+    type: 'line', data: { datasets },
+    options: { ...baseOpts('Cumulative R'), plugins: { legend: { labels: { color: '#888', font: { size: 9 } } } } }
   });
 }
 
 function renderModelBarChart(trades) {
-  if (modelBarChart) modelBarChart.destroy();
+  destroyChart('modelBar');
   const ctx = document.getElementById('modelBarChart').getContext('2d');
-  if (!trades.length) return;
-
-  const models = [...activeModels];
-  const winData = models.map(m => trades.filter(t => t.model === m && t.total_r > 0).length);
-  const lossData = models.map(m => -trades.filter(t => t.model === m && t.total_r <= 0).length);
-
-  modelBarChart = new Chart(ctx, {
+  const models = ALL_MODELS.filter(m => activeModels.has(m));
+  charts.modelBar = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: models.map(m => m.toUpperCase().replace('_REV','')),
+      labels: models.map(m => m.replace('_rev', '').replace('_mom', '').toUpperCase()),
       datasets: [
-        { label: 'Wins', data: winData, backgroundColor: 'rgba(0,200,83,0.7)', borderRadius: 3 },
-        { label: 'Losses', data: lossData, backgroundColor: 'rgba(255,23,68,0.7)', borderRadius: 3 },
-      ],
+        { label: 'Wins', data: models.map(m => trades.filter(t => t.model === m && t.total_r > 0).length), backgroundColor: 'rgba(0,230,118,0.6)', borderRadius: 3 },
+        { label: 'Losses', data: models.map(m => -trades.filter(t => t.model === m && t.total_r <= 0).length), backgroundColor: 'rgba(255,23,68,0.6)', borderRadius: 3 },
+      ]
     },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { labels: { color: '#888', font: { size: 10 } } } },
-      scales: {
-        x: { ticks: { color: '#666' }, grid: { display: false } },
-        y: { ticks: { color: '#444' }, grid: { color: '#111' } },
-      },
-    },
+    options: { ...baseOpts('Count'), plugins: { legend: { labels: { color: '#888', font: { size: 9 } } } } }
   });
 }
 
-function renderModelTable(trades) {
-  const tbody = document.querySelector('#modelTable tbody');
-  if (!trades.length) { tbody.innerHTML = ''; return; }
-  const models = [...new Set(trades.map(t => t.model))].sort();
-  tbody.innerHTML = models.map(m => {
-    const mt = trades.filter(t => t.model === m);
-    const s = calcStats(mt);
+// ======================== ALL TRADES TAB ========================
+function renderTradesTab() {
+  let t = TRADES.filter(t => tradeFilterModels.has(t.model));
+  if (tradeFilterDir !== 'all') t = t.filter(x => x.direction === tradeFilterDir);
+  if (tradeFilterResult === 'win') t = t.filter(x => x.total_r > 0);
+  if (tradeFilterResult === 'loss') t = t.filter(x => x.total_r <= 0);
+
+  const body = document.getElementById('tradeBody');
+  body.innerHTML = t.map((tr, i) => {
+    const qty = dynQty(tr.model, tr.risk_ticks);
+    const p = Math.round(tr.total_r * tr.risk_ticks * qty * MNQ_TICK);
+    const rCls = tr.total_r >= 0 ? 'pos' : 'neg';
+    const dirCls = tr.direction === 'long' ? 'pos' : 'neg';
+    const dur = duration(tr);
+    const riskDollars = Math.round(tr.risk_ticks * qty * MNQ_TICK);
+    return `<tr class="trade-row" data-idx="${i}" style="cursor:pointer">
+      <td>${i + 1}</td>
+      <td>${tr.entry_time.slice(0, 10)}</td>
+      <td>${tr.entry_time.slice(11, 16)}</td>
+      <td style="color:${MODEL_COLORS[tr.model]?.line || '#ccc'};font-weight:600">${tr.model.replace('_rev', '').replace('_mom', '').toUpperCase()}</td>
+      <td class="${dirCls}">${tr.direction.toUpperCase()}</td>
+      <td>${tr.entry.toFixed(2)}</td>
+      <td>${tr.stop.toFixed(2)}</td>
+      <td>${tr.target.toFixed(2)}</td>
+      <td>${tr.exit.toFixed(2)}</td>
+      <td>${tr.risk_ticks.toFixed(1)}t</td>
+      <td class="${rCls}" style="font-weight:700">${tr.total_r >= 0 ? '+' : ''}${tr.total_r.toFixed(3)}R</td>
+      <td class="${rCls}" style="font-weight:700">${p >= 0 ? '+' : '-'}$${Math.abs(p).toLocaleString()}</td>
+      <td>${tr.exit_reason}</td>
+      <td>${tr.moved_be ? '✓' : ''}</td>
+      <td>${tr.partial_taken ? '✓' : ''}</td>
+      <td>${dur}</td>
+    </tr>
+    <tr class="trade-detail-row" id="detail-${i}" style="display:none">
+      <td colspan="16">${renderTradeDetail(tr, qty, p)}</td>
+    </tr>`;
+  }).join('');
+
+  body.querySelectorAll('.trade-row').forEach(row => {
+    row.onclick = () => {
+      const idx = row.dataset.idx;
+      const detail = document.getElementById('detail-' + idx);
+      const showing = detail.style.display !== 'none';
+      body.querySelectorAll('.trade-detail-row').forEach(r => r.style.display = 'none');
+      body.querySelectorAll('.trade-row').forEach(r => r.classList.remove('expanded'));
+      if (!showing) {
+        detail.style.display = 'table-row';
+        row.classList.add('expanded');
+      }
+    };
+  });
+}
+
+function renderTradeDetail(t, qty, pnlVal) {
+  const riskUsd = Math.round(t.risk_ticks * qty * MNQ_TICK);
+  const targetR = t.risk_ticks > 0 ? (Math.abs(t.target - t.entry) / (t.risk_ticks * 0.25)).toFixed(2) : '?';
+  const movePoints = Math.abs(t.exit - t.entry).toFixed(2);
+  const moveTicks = (Math.abs(t.exit - t.entry) / 0.25).toFixed(0);
+
+  let timeline = '';
+  timeline += `<div class="td-step"><span class="td-time">Entry</span><span class="td-event">${t.direction.toUpperCase()} @ ${t.entry.toFixed(2)}</span><span style="color:var(--text3);margin-left:12px">${t.entry_time.slice(11, 16)} ET | ${qty} MNQ | Risk: $${riskUsd}</span></div>`;
+
+  if (t.partial_taken) {
+    timeline += `<div class="td-step"><span class="td-time" style="color:var(--cyan)">Partial</span><span class="td-event" style="color:var(--cyan)">Partial taken at ~${(0.5).toFixed(1)}R</span><span style="color:var(--text3);margin-left:12px">30% position closed</span></div>`;
+  }
+  if (t.moved_be) {
+    timeline += `<div class="td-step"><span class="td-time" style="color:var(--yellow)">BE Move</span><span class="td-event" style="color:var(--yellow)">Stop → breakeven @ ${t.entry.toFixed(2)}</span><span style="color:var(--text3);margin-left:12px">Triggered at 0.6R favorable</span></div>`;
+  }
+
+  const exitColor = t.total_r >= 0 ? 'var(--green)' : 'var(--red)';
+  timeline += `<div class="td-step"><span class="td-time" style="color:${exitColor}">Exit</span><span class="td-event" style="color:${exitColor}">${t.exit_reason.toUpperCase()} @ ${t.exit.toFixed(2)}</span><span style="color:var(--text3);margin-left:12px">${t.exit_time.slice(11, 16)} ET | ${t.total_r >= 0 ? '+' : ''}${t.total_r.toFixed(3)}R | ${pnlVal >= 0 ? '+' : '-'}$${Math.abs(pnlVal)}</span></div>`;
+
+  return `<div class="trade-detail">
+    <div class="td-grid">
+      <div class="td-item"><div class="td-label">Model</div><div class="td-val" style="color:${MODEL_COLORS[t.model]?.line}">${t.model}</div></div>
+      <div class="td-item"><div class="td-label">Quantity</div><div class="td-val">${qty} MNQ</div></div>
+      <div class="td-item"><div class="td-label">Risk per Trade</div><div class="td-val">$${riskUsd}</div></div>
+      <div class="td-item"><div class="td-label">Target R:R</div><div class="td-val">${targetR}R</div></div>
+      <div class="td-item"><div class="td-label">Move (points)</div><div class="td-val">${movePoints} pts (${moveTicks} ticks)</div></div>
+      <div class="td-item"><div class="td-label">Duration</div><div class="td-val">${duration(t)}</div></div>
+      <div class="td-item"><div class="td-label">Stop Distance</div><div class="td-val">${t.risk_ticks.toFixed(1)} ticks ($${riskUsd})</div></div>
+      <div class="td-item"><div class="td-label">Result</div><div class="td-val ${t.total_r >= 0 ? 'pos' : 'neg'}" style="font-size:16px">${t.total_r >= 0 ? '+' : ''}$${Math.abs(pnlVal).toLocaleString()}</div></div>
+    </div>
+    <div class="td-timeline"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px">Execution Timeline</div>${timeline}</div>
+  </div>`;
+}
+
+// ======================== MODEL ANALYSIS TAB ========================
+function renderModelsTab() {
+  const body = document.getElementById('modelSummaryBody');
+  body.innerHTML = ALL_MODELS.map(m => {
+    const mt = TRADES.filter(t => t.model === m);
+    if (!mt.length) return '';
+    const s = stats(mt);
     if (!s) return '';
+    const avgDur = mt.reduce((sum, t) => sum + (new Date(t.exit_time) - new Date(t.entry_time)), 0) / mt.length / 60000;
+    const riskDollars = MODEL_RISK[m] || 400;
     return `<tr>
-      <td style="font-weight:600;color:${MODEL_COLORS[m]?.line||'#ccc'}">${m.toUpperCase().replace('_REV','')}</td>
+      <td style="font-weight:700;color:${MODEL_COLORS[m]?.line}">${m}</td>
       <td>${s.n}</td>
-      <td class="${s.wr>=0.55?'pos':'neg'}">${(s.wr*100).toFixed(0)}%</td>
-      <td class="${s.pf>=1.5?'pos':'neg'}">${s.pf.toFixed(2)}</td>
-      <td class="${s.avgR>=0?'pos':'neg'}">${s.avgR>=0?'+':''}${s.avgR.toFixed(2)}R</td>
-      <td class="${s.totalR>=0?'pos':'neg'}">${s.totalR>=0?'+':''}${s.totalR.toFixed(1)}R</td>
-      <td class="${s.totalUsd>=0?'pos':'neg'}">${s.totalUsd>=0?'+':''}$${Math.round(s.totalUsd).toLocaleString()}</td>
-      <td class="pos">+${Math.max(...mt.map(x=>x.total_r)).toFixed(2)}R</td>
-      <td class="neg">${Math.min(...mt.map(x=>x.total_r)).toFixed(2)}R</td>
+      <td class="${s.wr >= 0.45 ? 'pos' : 'neg'}">${(s.wr * 100).toFixed(1)}%</td>
+      <td class="${s.pf >= 1.5 ? 'pos' : 'neg'}">${s.pf.toFixed(2)}</td>
+      <td class="${s.avgR >= 0 ? 'pos' : 'neg'}">${s.avgR >= 0 ? '+' : ''}${s.avgR.toFixed(3)}R</td>
+      <td class="${s.totalR >= 0 ? 'pos' : 'neg'}">${s.totalR >= 0 ? '+' : ''}${s.totalR.toFixed(1)}R</td>
+      <td class="${s.totalUsd >= 0 ? 'pos' : 'neg'}">$${Math.round(s.totalUsd).toLocaleString()}</td>
+      <td class="${s.sharpe >= 1 ? 'pos' : 'neu'}">${s.sharpe.toFixed(2)}</td>
+      <td class="neg">$${Math.round(Math.abs(s.maxDD)).toLocaleString()}</td>
+      <td>${avgDur < 60 ? avgDur.toFixed(0) + 'm' : (avgDur / 60).toFixed(1) + 'h'}</td>
+      <td class="pos">+${Math.max(...mt.map(t => t.total_r)).toFixed(2)}R</td>
+      <td class="neg">${Math.min(...mt.map(t => t.total_r)).toFixed(2)}R</td>
+      <td>$${riskDollars.toLocaleString()}</td>
     </tr>`;
   }).join('');
+
+  renderModelPieChart();
+  renderModelScatterChart();
+  renderModelEquityChart();
+  renderModelMonthlyChart();
 }
 
-function renderTradeTable(trades) {
-  const tbody = document.querySelector('#tradeTable tbody');
-  if (!trades.length) { tbody.innerHTML = ''; return; }
-  tbody.innerHTML = trades.map(t => {
-    const qty = dynQty(t.risk_ticks);
-    const pnl = Math.round(t.total_r * t.risk_ticks * qty * MNQ_TICK);
-    const dirCls = t.direction === 'long' ? 'green' : 'red';
-    const rCls = t.total_r >= 0 ? 'pos' : 'neg';
-    return `<tr>
-      <td>${t.entry_time.slice(0, 16)}</td>
-      <td style="color:${MODEL_COLORS[t.model]?.line||'#ccc'}">${t.model.replace('_rev','').toUpperCase()}</td>
-      <td class="${dirCls}">${t.direction.toUpperCase()}</td>
-      <td>${t.entry.toFixed(2)}</td>
-      <td>${t.exit.toFixed(2)}</td>
-      <td>${t.risk_ticks}t</td>
-      <td class="${rCls}">${t.total_r>=0?'+':''}${t.total_r.toFixed(2)}R</td>
-      <td class="${rCls}">${pnl>=0?'+':''}$${Math.abs(pnl).toLocaleString()}</td>
-      <td>${t.exit_reason}</td>
-    </tr>`;
-  }).join('');
+function renderModelPieChart() {
+  destroyChart('modelPie');
+  const ctx = document.getElementById('modelPieChart').getContext('2d');
+  const models = ALL_MODELS.filter(m => TRADES.some(t => t.model === m));
+  const pnls = models.map(m => {
+    const mt = TRADES.filter(t => t.model === m);
+    return mt.reduce((s, t) => s + pnl(t), 0);
+  });
+  const totalPos = pnls.filter(p => p > 0).reduce((s, p) => s + p, 0);
+  charts.modelPie = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: models.map(m => m.replace('_rev', '').replace('_mom', '').toUpperCase()),
+      datasets: [{ data: pnls.map(p => Math.max(0, p)), backgroundColor: models.map(m => MODEL_COLORS[m].bg), borderColor: 'transparent', borderWidth: 0 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '55%', plugins: { legend: { position: 'right', labels: { color: '#888', font: { size: 10 }, padding: 8 } } } }
+  });
 }
 
-function mkOpts(yLabel, isBar) {
-  return {
-    responsive: true, maintainAspectRatio: false,
-    plugins: {
-      legend: { display: false },
-      tooltip: { backgroundColor: '#1a1a2e', titleColor: '#fff', bodyColor: '#ccc', borderColor: '#2a2a3e', borderWidth: 1 },
-    },
-    scales: {
-      x: {
-        type: isBar ? 'category' : 'time',
-        time: { unit: 'week' },
-        ticks: { color: '#444', maxTicksLimit: 12, maxRotation: 0, font: { size: 10 } },
-        grid: { color: '#111' },
-      },
-      y: {
-        title: { display: true, text: yLabel, color: '#666', font: { size: 11 } },
-        ticks: { color: '#444', font: { size: 10 } },
-        grid: { color: '#111' },
-      },
-    },
-  };
+function renderModelScatterChart() {
+  destroyChart('modelScatter');
+  const ctx = document.getElementById('modelScatterChart').getContext('2d');
+  const datasets = ALL_MODELS.map(m => {
+    const mt = TRADES.filter(t => t.model === m);
+    if (!mt.length) return null;
+    const s = stats(mt);
+    return {
+      label: m.replace('_rev', '').replace('_mom', '').toUpperCase(),
+      data: [{ x: s.wr * 100, y: s.avgR, r: Math.sqrt(s.n) * 3 }],
+      backgroundColor: MODEL_COLORS[m].bg,
+    };
+  }).filter(Boolean);
+  charts.modelScatter = new Chart(ctx, {
+    type: 'bubble', data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#888', font: { size: 9 } } } },
+      scales: {
+        x: { title: { display: true, text: 'Win Rate %', color: '#666' }, ticks: { color: '#444' }, grid: { color: '#0f0f18' } },
+        y: { title: { display: true, text: 'Avg R', color: '#666' }, ticks: { color: '#444' }, grid: { color: '#0f0f18' } }
+      }
+    }
+  });
+}
+
+function renderModelEquityChart() {
+  destroyChart('modelEquity');
+  const ctx = document.getElementById('modelEquityChart').getContext('2d');
+  const datasets = ALL_MODELS.map(m => {
+    const mt = TRADES.filter(t => t.model === m).sort((a, b) => a.entry_time.localeCompare(b.entry_time));
+    if (!mt.length) return null;
+    let cum = 0;
+    return {
+      label: m.replace('_rev', '').replace('_mom', '').toUpperCase(),
+      data: mt.map(t => { cum += pnl(t); return { x: t.entry_time.slice(0, 10), y: Math.round(cum) }; }),
+      borderColor: MODEL_COLORS[m].line, borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false
+    };
+  }).filter(Boolean);
+  charts.modelEquity = new Chart(ctx, {
+    type: 'line', data: { datasets },
+    options: { ...baseOpts('Cumulative $ P&L'), plugins: { legend: { labels: { color: '#888', font: { size: 9 } } } } }
+  });
+}
+
+function renderModelMonthlyChart() {
+  destroyChart('modelMonthly');
+  const ctx = document.getElementById('modelMonthlyChart').getContext('2d');
+  const months = [...new Set(TRADES.map(t => t.entry_time.slice(0, 7)))].sort();
+  const datasets = ALL_MODELS.map(m => {
+    const mt = TRADES.filter(t => t.model === m);
+    if (!mt.length) return null;
+    return {
+      label: m.replace('_rev', '').replace('_mom', '').toUpperCase(),
+      data: months.map(mo => mt.filter(t => t.entry_time.startsWith(mo)).length),
+      backgroundColor: MODEL_COLORS[m].bg, borderRadius: 2,
+    };
+  }).filter(Boolean);
+  charts.modelMonthly = new Chart(ctx, {
+    type: 'bar', data: { labels: months, datasets },
+    options: { ...baseOpts('Trades'), plugins: { legend: { labels: { color: '#888', font: { size: 9 } } } }, scales: { ...baseOpts('Trades').scales, x: { stacked: true, ticks: { color: '#444' }, grid: { display: false } }, y: { stacked: true, ticks: { color: '#444' }, grid: { color: '#0f0f18' } } } }
+  });
+}
+
+// ======================== CALENDAR TAB ========================
+function renderCalendarTab() {
+  const dm = computeDailyPnl(TRADES);
+  const allDates = Object.keys(dm).sort();
+  if (!allDates.length) return;
+
+  const months = {};
+  allDates.forEach(d => {
+    const mo = d.slice(0, 7);
+    if (!months[mo]) months[mo] = {};
+    months[mo][d] = dm[d];
+  });
+
+  const container = document.getElementById('calendarContainer');
+  container.innerHTML = '';
+
+  Object.keys(months).sort().forEach(mo => {
+    const moDiv = document.createElement('div');
+    moDiv.style.cssText = 'min-width:280px;flex:1';
+    const label = new Date(mo + '-01').toLocaleString('en', { month: 'long', year: 'numeric' });
+    moDiv.innerHTML = `<div style="font-size:12px;font-weight:700;color:#888;margin-bottom:8px">${label}</div>`;
+
+    const grid = document.createElement('div');
+    grid.className = 'calendar-grid';
+    ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].forEach(d => {
+      const h = document.createElement('div');
+      h.className = 'cal-header';
+      h.textContent = d;
+      grid.appendChild(h);
+    });
+
+    const firstDay = new Date(mo + '-01');
+    let dayOfWeek = firstDay.getDay();
+    dayOfWeek = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    for (let i = 0; i < dayOfWeek; i++) {
+      const empty = document.createElement('div');
+      empty.className = 'cal-cell empty';
+      grid.appendChild(empty);
+    }
+
+    const daysInMonth = new Date(parseInt(mo.slice(0, 4)), parseInt(mo.slice(5, 7)), 0).getDate();
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = mo + '-' + String(day).padStart(2, '0');
+      const cell = document.createElement('div');
+      cell.className = 'cal-cell';
+
+      const dayLabel = document.createElement('div');
+      dayLabel.className = 'cal-day';
+      dayLabel.textContent = day;
+      cell.appendChild(dayLabel);
+
+      if (months[mo][dateStr] !== undefined) {
+        const val = Math.round(months[mo][dateStr]);
+        const valEl = document.createElement('div');
+        valEl.textContent = (val >= 0 ? '+' : '') + '$' + Math.abs(val);
+        valEl.style.fontWeight = '700';
+        valEl.style.fontSize = '10px';
+
+        if (val > 500) { cell.style.background = 'rgba(0,230,118,0.25)'; valEl.style.color = '#00e676'; }
+        else if (val > 0) { cell.style.background = 'rgba(0,230,118,0.1)'; valEl.style.color = '#00e676'; }
+        else if (val > -200) { cell.style.background = 'rgba(255,23,68,0.1)'; valEl.style.color = '#ff1744'; }
+        else { cell.style.background = 'rgba(255,23,68,0.25)'; valEl.style.color = '#ff1744'; }
+        cell.appendChild(valEl);
+        cell.onclick = () => showDayDetail(dateStr);
+      } else {
+        cell.style.background = '#0a0a0f';
+        cell.classList.add('empty');
+      }
+      grid.appendChild(cell);
+    }
+    moDiv.appendChild(grid);
+    container.appendChild(moDiv);
+  });
+}
+
+function showDayDetail(dateStr) {
+  const dayTrades = TRADES.filter(t => t.entry_time.startsWith(dateStr));
+  const panel = document.getElementById('dayDetailPanel');
+  if (!dayTrades.length) { panel.innerHTML = `<span style="color:var(--text3)">No trades on ${dateStr}</span>`; return; }
+
+  const dm = computeDailyPnl(dayTrades);
+  const dayPnl = Object.values(dm).reduce((s, v) => s + v, 0);
+  const wins = dayTrades.filter(t => t.total_r > 0).length;
+
+  panel.innerHTML = `
+    <div style="display:flex;gap:24px;align-items:center;margin-bottom:12px">
+      <div style="font-size:14px;font-weight:700;color:#fff">${dateStr}</div>
+      <div class="${dayPnl >= 0 ? 'pos' : 'neg'}" style="font-size:16px;font-weight:700">${dayPnl >= 0 ? '+' : '-'}$${Math.abs(Math.round(dayPnl)).toLocaleString()}</div>
+      <div style="color:var(--text3);font-size:11px">${dayTrades.length} trades | ${wins} wins | ${(wins / dayTrades.length * 100).toFixed(0)}% WR</div>
+    </div>
+    <table class="dt" style="font-size:11px">
+      <thead><tr><th>Time</th><th>Model</th><th>Dir</th><th>Entry</th><th>Exit</th><th>R</th><th>$ P&L</th><th>Exit</th><th>Duration</th></tr></thead>
+      <tbody>${dayTrades.map(t => {
+        const qty = dynQty(t.model, t.risk_ticks);
+        const p = Math.round(t.total_r * t.risk_ticks * qty * MNQ_TICK);
+        return `<tr>
+          <td>${t.entry_time.slice(11, 16)}</td>
+          <td style="color:${MODEL_COLORS[t.model]?.line};font-weight:600">${t.model.replace('_rev', '').replace('_mom', '').toUpperCase()}</td>
+          <td class="${t.direction === 'long' ? 'pos' : 'neg'}">${t.direction.toUpperCase()}</td>
+          <td>${t.entry.toFixed(2)}</td><td>${t.exit.toFixed(2)}</td>
+          <td class="${t.total_r >= 0 ? 'pos' : 'neg'}" style="font-weight:700">${t.total_r >= 0 ? '+' : ''}${t.total_r.toFixed(3)}R</td>
+          <td class="${p >= 0 ? 'pos' : 'neg'}" style="font-weight:700">${p >= 0 ? '+' : '-'}$${Math.abs(p)}</td>
+          <td>${t.exit_reason}</td>
+          <td>${duration(t)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+}
+
+// ======================== RISK ANALYTICS TAB ========================
+function renderRiskTab() {
+  const s = stats(TRADES);
+  if (!s) return;
+
+  const dp = s.dailyPnls;
+  const sorted = [...dp].sort((a, b) => a - b);
+  const var95 = sorted[Math.floor(sorted.length * 0.05)] || 0;
+  const var99 = sorted[Math.floor(sorted.length * 0.01)] || 0;
+  const cvar = sorted.slice(0, Math.floor(sorted.length * 0.05)).reduce((s, v) => s + v, 0) / Math.max(1, Math.floor(sorted.length * 0.05));
+
+  let maxDDDays = 0, curDDDays = 0, cum = 0, peak = 0;
+  s.dates.forEach((d, i) => {
+    cum += s.dailyPnls[i];
+    if (cum > peak) { peak = cum; curDDDays = 0; }
+    else { curDDDays++; if (curDDDays > maxDDDays) maxDDDays = curDDDays; }
+  });
+
+  const recoveryFactor = s.maxDD !== 0 ? s.totalUsd / Math.abs(s.maxDD) : 99;
+  const avgWin = TRADES.filter(t => t.total_r > 0).reduce((s, t) => s + t.total_r, 0) / Math.max(1, TRADES.filter(t => t.total_r > 0).length);
+  const avgLoss = Math.abs(TRADES.filter(t => t.total_r <= 0).reduce((s, t) => s + t.total_r, 0) / Math.max(1, TRADES.filter(t => t.total_r <= 0).length));
+  const payoffRatio = avgLoss > 0 ? avgWin / avgLoss : 99;
+
+  document.getElementById('riskMetrics').innerHTML = [
+    { l: 'Sharpe Ratio', v: s.sharpe.toFixed(2), c: s.sharpe >= 1.5 ? 'pos' : 'neu', s: 'Annualized' },
+    { l: 'Sortino Ratio', v: s.sortino.toFixed(2), c: s.sortino >= 2 ? 'pos' : 'neu', s: 'Downside risk adj' },
+    { l: 'Calmar Ratio', v: s.calmar.toFixed(2), c: s.calmar >= 2 ? 'pos' : 'neu', s: 'Return / Max DD' },
+    { l: 'VaR (95%)', v: '$' + Math.round(var95).toLocaleString(), c: 'neg', s: 'Daily worst 5%' },
+    { l: 'CVaR (95%)', v: '$' + Math.round(cvar).toLocaleString(), c: 'neg', s: 'Expected tail loss' },
+    { l: 'Max DD Duration', v: maxDDDays + ' days', c: maxDDDays > 10 ? 'neg' : 'neu', s: 'Peak-to-trough' },
+    { l: 'Recovery Factor', v: recoveryFactor.toFixed(2), c: recoveryFactor >= 3 ? 'pos' : 'neu', s: 'Net / Max DD' },
+    { l: 'Payoff Ratio', v: payoffRatio.toFixed(2), c: payoffRatio >= 1.5 ? 'pos' : 'neu', s: 'Avg win / avg loss' },
+    { l: 'VaR (99%)', v: '$' + Math.round(var99).toLocaleString(), c: 'neg', s: 'Daily worst 1%' },
+    { l: 'Win Rate', v: (s.wr * 100).toFixed(1) + '%', c: s.wr >= 0.45 ? 'pos' : 'neg', s: s.wins + ' / ' + s.n },
+    { l: 'Expectancy', v: (s.avgR >= 0 ? '+' : '') + s.avgR.toFixed(3) + 'R', c: s.avgR > 0 ? 'pos' : 'neg', s: 'Per-trade avg R' },
+    { l: 'Green Days', v: s.greenDays + ' / ' + s.days, c: s.greenDays >= 5 ? 'pos' : 'neg', s: '≥$150 net P&L' },
+  ].map(x => `<div class="risk-card"><div class="rc-label">${x.l}</div><div class="rc-val ${x.c}">${x.v}</div><div class="rc-sub">${x.s}</div></div>`).join('');
+
+  renderRollingSharpe(s);
+  renderDailyHist(s);
+  renderStreakChart();
+  renderUnderwaterChart(s);
+}
+
+function renderRollingSharpe(s) {
+  destroyChart('rollingSharpe');
+  const ctx = document.getElementById('rollingSharpeChart').getContext('2d');
+  const window = 20;
+  const data = [];
+  for (let i = window; i <= s.dailyPnls.length; i++) {
+    const slice = s.dailyPnls.slice(i - window, i);
+    const mean = slice.reduce((s, v) => s + v, 0) / window;
+    const std = Math.sqrt(slice.reduce((s, v) => s + (v - mean) ** 2, 0) / window);
+    const sharpe = std > 0 ? (mean / std) * Math.sqrt(252) : 0;
+    data.push({ x: s.dates[i - 1], y: +sharpe.toFixed(2) });
+  }
+  charts.rollingSharpe = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [{ data, borderColor: '#b388ff', backgroundColor: 'rgba(179,136,255,0.06)', fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.3 }] },
+    options: { ...baseOpts('Sharpe'), scales: { ...baseOpts('Sharpe').scales, x: { type: 'time', time: { unit: 'week' }, ticks: { color: '#444', font: { size: 9 } }, grid: { color: '#0f0f18' } } } }
+  });
+}
+
+function renderDailyHist(s) {
+  destroyChart('dailyHist');
+  const ctx = document.getElementById('dailyHistChart').getContext('2d');
+  const bins = [];
+  for (let b = -2000; b <= 4000; b += 200) bins.push(b);
+  const counts = bins.map(b => s.dailyPnls.filter(p => p >= b && p < b + 200).length);
+  charts.dailyHist = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: bins.map(b => '$' + b), datasets: [{ data: counts, backgroundColor: bins.map(b => b >= 0 ? 'rgba(0,230,118,0.4)' : 'rgba(255,23,68,0.4)'), borderRadius: 2 }] },
+    options: baseOpts('Frequency')
+  });
+}
+
+function renderStreakChart() {
+  destroyChart('streak');
+  const ctx = document.getElementById('streakChart').getContext('2d');
+  const sorted = [...TRADES].sort((a, b) => a.entry_time.localeCompare(b.entry_time));
+  const streaks = [];
+  let cur = 0;
+  sorted.forEach(t => {
+    if (t.total_r > 0) { cur = cur > 0 ? cur + 1 : 1; }
+    else { cur = cur < 0 ? cur - 1 : -1; }
+    streaks.push(cur);
+  });
+  charts.streak = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: sorted.map((_, i) => i + 1), datasets: [{ data: streaks, backgroundColor: streaks.map(s => s > 0 ? 'rgba(0,230,118,0.5)' : 'rgba(255,23,68,0.5)'), borderRadius: 1 }] },
+    options: baseOpts('Streak Length')
+  });
+}
+
+function renderUnderwaterChart(s) {
+  destroyChart('underwater');
+  const ctx = document.getElementById('underwaterChart').getContext('2d');
+  let cum = 0, peak = 0;
+  const data = s.dates.map((d, i) => {
+    cum += s.dailyPnls[i];
+    if (cum > peak) peak = cum;
+    return { x: d, y: Math.round(cum - peak) };
+  });
+  charts.underwater = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [{ data, borderColor: '#ff1744', backgroundColor: 'rgba(255,23,68,0.08)', fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.2 }] },
+    options: { ...baseOpts('Underwater ($)'), scales: { ...baseOpts('Underwater ($)').scales, x: { type: 'time', time: { unit: 'week' }, ticks: { color: '#444', font: { size: 9 } }, grid: { color: '#0f0f18' } } } }
+  });
+}
+
+// ======================== FUNDED ACCOUNT TAB ========================
+function renderFundedTab() {
+  document.getElementById('fundedKPIs').innerHTML = [
+    { l: 'P($10K) Overall', v: '97.90%', c: 'pos', s: 'Walk-forward MC 25K trials' },
+    { l: 'Trailing DD', v: '$3,000', c: 'neg', s: 'TopStep 100K rule' },
+    { l: 'Dollar Loss Cap', v: '$500/day', c: '', s: 'Self-imposed risk limit' },
+    { l: 'Green Days Required', v: '5 days', c: '', s: '≥$150 net P&L each' },
+    { l: 'Max Payout', v: '$5,000', c: 'pos', s: 'Per withdrawal' },
+    { l: 'Payout %', v: '30%', c: '', s: 'Of account balance' },
+    { l: 'Profit Split', v: '100% first $10K', c: 'pos', s: '90% thereafter' },
+    { l: 'Models Active', v: '9', c: '', s: 'Ensemble strategy' },
+  ].map(x => `<div class="funded-cell"><div class="fc-label">${x.l}</div><div class="fc-val ${x.c}">${x.v}</div><div class="fc-sub">${x.s}</div></div>`).join('');
+
+  document.getElementById('configBlock').innerHTML = [
+    ['Account Size', '$100,000'],
+    ['Trailing Drawdown', '$3,000'],
+    ['Static Floor', 'At $0 when peak ≥ $3,000'],
+    ['Dollar Loss Cap', '$500/day'],
+    ['Payout Balance %', '30%'],
+    ['Max Payout', '$5,000'],
+    ['Green Day Minimum', '$150'],
+    ['Green Days per Payout', '5'],
+    ['Consec Loss Cooldown', '10 trades'],
+    ['Time Stop', '45 minutes'],
+    ['BE Trigger', '0.6R favorable'],
+  ].map(([k, v]) => `<div class="cfg-row"><span class="cfg-k">${k}</span><span class="cfg-v">${v}</span></div>`).join('');
+
+  document.getElementById('riskAllocBlock').innerHTML = Object.entries(MODEL_RISK)
+    .sort((a, b) => b[1] - a[1])
+    .map(([m, r]) => `<div class="cfg-row"><span class="cfg-k" style="color:${MODEL_COLORS[m]?.line}">${m}</span><span class="cfg-v">$${r.toLocaleString()}</span></div>`).join('');
+
+  document.getElementById('rulesGrid').innerHTML = [
+    { title: 'Evaluation', items: [['Profit Target', '$6,000'], ['Max Loss', '$3,000 trailing'], ['Time Limit', 'None'], ['Consistency', '50% rule']] },
+    { title: 'Funded Account', items: [['Starting Balance', '$0 (virtual)'], ['Max Loss', '$3,000 trailing'], ['Static Lock', 'At peak ≥ $3,000'], ['Trading Hours', '6PM-5PM ET']] },
+    { title: 'Payouts', items: [['Express Payout', '50% of balance'], ['Full Payout', '100% after 30 wins'], ['Min Green Days', '5 at $150+'], ['Split', '100% first $10K, 90% after']] },
+  ].map(s => `<div class="config-block"><div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:var(--blue);margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--border)">${s.title}</div>${s.items.map(([k, v]) => `<div class="cfg-row"><span class="cfg-k">${k}</span><span class="cfg-v">${v}</span></div>`).join('')}</div>`).join('');
 }
 
 init();
