@@ -126,7 +126,7 @@ def fig1_equity_and_drawdown(df, cfg, trades):
     colors = ['#4CAF50' if p >= 0 else '#F44336' for p in daily_pnl]
     ax2.bar(dates_dt, daily_pnl, color=colors, alpha=0.7, width=1.5)
     ax2.axhline(0, color='gray', linewidth=0.5)
-    ax2.axhline(-1200, color='red', linewidth=1, linestyle='--', alpha=0.5, label='DLC $1,200')
+    ax2.axhline(-500, color='red', linewidth=1, linestyle='--', alpha=0.5, label='DLC $500')
     ax2.set_ylabel('Daily P&L ($)', fontsize=10)
     ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
     ax2.legend(loc='lower left', fontsize=9)

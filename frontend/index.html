@@ -446,7 +446,7 @@
       <div class="img-grid c1">
         <div class="img-wrap">
           <img src="/charts/chart_equity_drawdown.png" alt="Equity">
-          <div class="cap">Cumulative dollar P&L with model-tiered risk, daily P&L with $1,200 DLC, drawdown vs $3,000 trailing DD.</div>
+          <div class="cap">Cumulative dollar P&L with model-tiered risk, daily P&L with $500 DLC, drawdown vs $3,000 trailing DD.</div>
         </div>
       </div>
       <div class="img-grid c2" style="margin-top:12px;">
@@ -506,28 +506,28 @@
           <div class="r-tags"><span class="r-tag pri">PRI 15</span><span class="r-tag rsk">$2,500</span></div>
           <p>Ornstein-Uhlenbeck mean-reversion on price-VWAP deviation. Trades when half-life is short and Hurst < 0.45. Quality-filtered Q >= 4.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num amb">2</div><h4>PD Level Reversion</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 22</span><span class="r-tag rsk">$1,200</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 22</span><span class="r-tag rsk">$900</span></div>
           <p>Fades at previous day high/low with reversal candle confirmation. Institutional reference levels.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num grn">3</div><h4>VWAP Reversion</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 25</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 25</span><span class="r-tag rsk">$400</span></div>
           <p>Bidirectional VWAP z-score fade. Short z > 2.0, long z < -2.0. Targets snap-back to session VWAP.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num pur">4</div><h4>Opening Range Rev</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 28</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 28</span><span class="r-tag rsk">$400</span></div>
           <p>Fades extended moves beyond 15-min opening range back to OR midpoint. Window: 10:00-12:00 ET.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num red">5</div><h4>EMA Reversion</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 30</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 30</span><span class="r-tag rsk">$400</span></div>
           <p>Fades when price extends 2.5+ std devs from 20-period EMA. Window: 9:50-14:30 ET.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num tel">6</div><h4>Sweep Reversal</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 35</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 35</span><span class="r-tag rsk">$400</span></div>
           <p>Detects liquidity sweeps at PDH/PDL and session extremes. Fades with reversal confirmation.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num tel">7</div><h4>Kalman Momentum</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 40</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 40</span><span class="r-tag rsk">$400</span></div>
           <p>Kalman filter slope direction when Hurst >= 0.5. 5-bar consistency. Window: 10:15-14:00 ET.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num ros">8</div><h4>Trend Continuation</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 40</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 40</span><span class="r-tag rsk">$400</span></div>
           <p>Follows EMA/regime trends with fair value gap pullback entries. 10-bar EMA alignment.</p></div>
         <div class="r-card"><div class="r-head"><div class="r-num amb">9</div><h4>PM Momentum</h4></div>
-          <div class="r-tags"><span class="r-tag pri">PRI 50</span><span class="r-tag rsk">$600</span></div>
+          <div class="r-tags"><span class="r-tag pri">PRI 50</span><span class="r-tag rsk">$400</span></div>
           <p>Afternoon session Kalman slope pullback. Window: 13:30-15:00 ET.</p></div>
       </div>
     </div>
@@ -538,9 +538,9 @@
         <div class="r-card"><div class="r-head"><div class="r-num grn">&#x21C5;</div><h4>Exit Mechanics</h4></div>
           <p>Partial profit: <span class="v">0%</span><br>Trail stop: <span class="v">0.1%</span> behind MFE after 0.5R<br>Breakeven: <span class="v">0.6R</span><br>Time stop: <span class="v">30-45 min</span><br>Session close: <span class="v">4:59 PM ET</span></p></div>
         <div class="r-card"><div class="r-head"><div class="r-num red">&#x26A0;</div><h4>Daily Controls</h4></div>
-          <p>Win cap: <span class="v">2.0R</span><br>Dollar loss cap: <span class="v">$1,200</span><br>Consec cooldown: <span class="v">10</span> losses<br>Signal cutoff: <span class="v">2:30 PM ET</span><br>Max concurrent: <span class="v">1</span></p></div>
+          <p>Win cap: <span class="v">2.0R</span><br>Dollar loss cap: <span class="v">$500</span><br>Consec cooldown: <span class="v">10</span> losses<br>Signal cutoff: <span class="v">2:30 PM ET</span><br>Max concurrent: <span class="v">1</span></p></div>
         <div class="r-card"><div class="r-head"><div class="r-num amb">&#x2696;</div><h4>Position Sizing</h4></div>
-          <p>Formula: <span class="v">min(50, risk$ / (ticks * $0.50))</span><br>OU: <span class="v">$2,500</span> | PD: <span class="v">$1,200</span><br>Standard: <span class="v">$600</span> (7 models)<br>Max: <span class="v">50 MNQ</span></p></div>
+          <p>Formula: <span class="v">min(50, risk$ / (ticks * $0.50))</span><br>OU: <span class="v">$2,500</span> | PD: <span class="v">$900</span><br>Standard: <span class="v">$400</span> (7 models)<br>Max: <span class="v">50 MNQ</span></p></div>
       </div>
     </div>
 
@@ -551,9 +551,9 @@
           <p>Profit target: <span class="v">$6,000</span><br>Trailing DD: <span class="v">$3,000</span><br>No static floor<br>No time limit</p>
           <div class="mc-note"><strong>MC:</strong> <span class="v">89.4%</span> pass, median <span class="v">7 days</span></div></div>
         <div class="ts-card funded"><h4>Funded Account</h4>
-          <p>Balance: <span class="v">$100,000</span><br>Trailing DD: <span class="v">$3,000</span><br>Static floor: <span class="v">$0</span> at peak >= $3K<br>DLC: <span class="v">$1,200/day</span></p></div>
+          <p>Balance: <span class="v">$100,000</span><br>Trailing DD: <span class="v">$3,000</span><br>Static floor: <span class="v">$0</span> at peak >= $3K<br>DLC: <span class="v">$500/day</span></p></div>
         <div class="ts-card payout"><h4>Payouts</h4>
-          <p>Max: <span class="v">$2,000</span>/withdrawal<br>Cap: <span class="v">50%</span> of balance<br>Green day: <span class="v">$200</span> profit<br>Per payout: <span class="v">5</span> green days</p>
+          <p>Max: <span class="v">$5,000</span>/withdrawal<br>Cap: <span class="v">50%</span> of balance<br>Green day: <span class="v">$150</span> profit<br>Per payout: <span class="v">5</span> green days</p>
           <div class="mc-note"><strong>MC:</strong> <span class="v">89%</span> P($10K in 60d)</div></div>
       </div>
     </div>
@@ -584,11 +584,11 @@ const MODEL_COLORS = {
   pm_mom:     { bg: 'rgba(148,163,184,0.5)', line: '#94A3B8', pill: '#0F0F11', pillText: '#CBD5E1' },
 };
 
-const MODEL_RISK = { ou_rev: 2500, pd_rev: 1200, vwap_rev: 600, ema_rev: 600, kalman_mom: 600, pm_mom: 600, sweep: 600, trend: 600, or_rev: 600 };
-const MNQ_TICK = 0.50, DLC = 1200, MAX_CONTRACTS = 50;
+const MODEL_RISK = { ou_rev: 2500, pd_rev: 900, vwap_rev: 400, ema_rev: 400, kalman_mom: 400, pm_mom: 400, sweep: 400, trend: 400, or_rev: 400 };
+const MNQ_TICK = 0.50, DLC = 500, MAX_CONTRACTS = 50;
 
 function tradePnl(t) {
-  const riskDol = MODEL_RISK[t.model] || 600;
+  const riskDol = MODEL_RISK[t.model] || 400;
   const rpc = t.risk_ticks * MNQ_TICK;
   if (rpc <= 0) return 0;
   const c = Math.min(MAX_CONTRACTS, Math.floor(riskDol / rpc));
@@ -774,7 +774,7 @@ function renderModelTable() {
   tbody.innerHTML=models.map(m=>{const mt=t.filter(x=>x.model===m),n=mt.length,wins=mt.filter(x=>x.total_r>0).length,wr=wins/n;
     const totalR=mt.reduce((s,x)=>s+x.total_r,0),avgR=totalR/n;
     const gw=mt.filter(x=>x.total_r>0).reduce((s,x)=>s+x.total_r,0),gl=Math.abs(mt.filter(x=>x.total_r<=0).reduce((s,x)=>s+x.total_r,0)),pf=gl>0?gw/gl:99;
-    const risk=MODEL_RISK[m]||600,dm=computeDailyPnl(mt),totalUsd=Object.values(dm).reduce((s,v)=>s+v,0);
+    const risk=MODEL_RISK[m]||400,dm=computeDailyPnl(mt),totalUsd=Object.values(dm).reduce((s,v)=>s+v,0);
     return `<tr><td style="font-weight:600;color:${MODEL_COLORS[m]?.line||'#78716C'}">${m}</td>
       <td class="m">${n}</td><td class="m ${wr>=.4?'pos':'neg'}">${(wr*100).toFixed(1)}%</td>
       <td class="m ${pf>=1.5?'pos':'neg'}">${pf.toFixed(2)}</td>

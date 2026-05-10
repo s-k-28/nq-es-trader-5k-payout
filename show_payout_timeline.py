@@ -42,20 +42,20 @@ def main():
     dates = daily_r['date'].values
     n = len(r_vals)
 
-    sim_days = 65  # ~3 months of trading days
-    payout_caps = [2000, 2000, 4000, 4000, 6000]  # first 5 payouts
+    sim_days = 45  # ~60 calendar days of trading
+    payout_caps = [5000, 5000, 5000, 5000, 5000]  # TopStep 100K: $5K max per payout
     payout_cycle_calendar = 3  # can request every 3 calendar days
     payout_cycle_trading = 5  # but need ~5 trading days to build profit
-    profit_split = 0.90
+    profit_split = 1.00  # 100% of first $10K, then 90%
     min_buffer = 800
     min_payout = 500
-    daily_loss_limit = 1000
+    daily_loss_limit = 500
 
     # Run many sims, collect detailed traces
     all_sims = []
     for start in range(min(n - sim_days, n)):
-        bal = 53000.0
-        floor = 51000.0
+        bal = 103000.0
+        floor = 100000.0
         total_paid = 0.0
         payout_num = 0
         blown = False

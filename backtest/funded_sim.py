@@ -30,7 +30,7 @@ def trades_to_daily_pnl(
         if risk_per_contract <= 0:
             continue
 
-        model_risk = risk_map.get(t.model, 600)
+        model_risk = risk_map.get(t.model, 400)
         contracts = min(MAX_CONTRACTS, int(model_risk / risk_per_contract))
         if contracts <= 0:
             continue

@@ -29,6 +29,7 @@ from strategy.models.base import Signal
 from live.broker_topstep import TopStepBroker, ORD_FILLED, ORD_CANCELLED, ORD_REJECTED, ORD_EXPIRED
 from live.reporter import HubReporter
 from live.alerts import TelegramAlerts
+from live.adaptive import AdaptiveGuard
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ MNQ_TICK_VALUE = 0.50
 MAX_CONTRACTS = 50
 CT = ZoneInfo('America/Chicago')
 ENTRY_TIMEOUT_SEC = 60
+STATE_DIR = 'live/state'
+ADAPTIVE_STATE = f'{STATE_DIR}/adaptive.json'
+ADAPTIVE_JOURNAL = f'{STATE_DIR}/journal.json'
 
 
 @dataclass
@@ -63,6 +67,7 @@ class LiveExecutor:
         self.broker = broker
         self.reporter = HubReporter()
         self.alerts = TelegramAlerts()
+        self.guard = AdaptiveGuard()
 
         self.buf = pd.DataFrame()
         self.daily_df = pd.DataFrame()
@@ -120,6 +125,8 @@ class LiveExecutor:
         self.start_balance = acct.get('balance', 100000)
         self.peak_balance = self.start_balance
         log.info(f"Account balance: ${self.start_balance:,.0f}")
+
+        self.guard.load_state(ADAPTIVE_STATE)
 
         risk_str = ' | '.join(f"{m}:${d:,}" for m, d in
                               sorted(self.cfg.funded.model_risk_dollars.items()))
@@ -294,10 +301,23 @@ class LiveExecutor:
         if risk_per_contract <= 0:
             return
 
-        model_risk = self.cfg.funded.model_risk_dollars.get(sig.model, 600)
+        model_risk = self.cfg.funded.model_risk_dollars.get(sig.model, 400)
         qty = min(MAX_CONTRACTS, int(model_risk / risk_per_contract))
         if qty <= 0:
             return
+
+        now_ct = datetime.now(CT)
+        atr = self._current_atr()
+        avg_atr = self._avg_atr()
+        scale, guards = self.guard.pre_entry_check(
+            sig.model, now_ct.hour, atr, avg_atr)
+        if scale == 0.0:
+            log.info(f"    SKIP -- AdaptiveGuard blocked: {guards}")
+            return
+        if scale < 1.0:
+            scaled_qty = max(1, int(qty * scale))
+            log.info(f"    AdaptiveGuard scale: {qty} -> {scaled_qty} MNQ ({guards})")
+            qty = scaled_qty
 
         dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
         potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
@@ -428,7 +448,7 @@ class LiveExecutor:
             t.pending = False
             t.entry_time = datetime.now(CT)
             log.info(f"    FILLED -- {t.contracts} MNQ @ {t.entry_price:.2f}")
-            model_risk = self.cfg.funded.model_risk_dollars.get(t.signal.model, 600)
+            model_risk = self.cfg.funded.model_risk_dollars.get(t.signal.model, 400)
             self.alerts.trade_entry(
                 t.signal.model, t.direction, t.entry_price,
                 t.stop_price, t.target_price, t.contracts,
@@ -507,6 +527,12 @@ class LiveExecutor:
             'daily_r': round(self.daily_r, 3), 'daily_pnl': round(self.daily_pnl_usd, 2),
         })
 
+        now_ct = datetime.now(CT)
+        self.guard.record_trade(
+            t.signal.model, total_r, pnl, now_ct.hour,
+            self._current_atr() / max(self._avg_atr(), 0.01))
+        self.guard.save_state(ADAPTIVE_STATE)
+
         self._reset_trade()
 
     def _close_trade(self, reason: str):
@@ -560,6 +586,12 @@ class LiveExecutor:
             'daily_r': round(self.daily_r, 3), 'daily_pnl': round(self.daily_pnl_usd, 2),
         })
 
+        now_ct = datetime.now(CT)
+        self.guard.record_trade(
+            t.signal.model, total_r, pnl_usd, now_ct.hour,
+            self._current_atr() / max(self._avg_atr(), 0.01))
+        self.guard.save_state(ADAPTIVE_STATE)
+
         self._reset_trade()
 
     def shutdown(self):
@@ -571,5 +603,21 @@ class LiveExecutor:
                 log.info("Shutdown -- flattening open position")
                 self.broker.flatten()
             self._reset_trade()
+        self.guard.save_state(ADAPTIVE_STATE)
+        self.guard.save_journal(ADAPTIVE_JOURNAL)
         self.alerts.bot_stopped("shutdown")
         log.info("Executor shutdown complete.")
+
+    def _current_atr(self) -> float:
+        if self.buf.empty or len(self.buf) < 15:
+            return 0.0
+        recent = self.buf.tail(14)
+        tr = (recent['high'] - recent['low']).mean()
+        return float(tr)
+
+    def _avg_atr(self) -> float:
+        if self.buf.empty or len(self.buf) < 200:
+            return self._current_atr()
+        window = self.buf.tail(200)
+        tr = (window['high'] - window['low']).mean()
+        return float(tr)
