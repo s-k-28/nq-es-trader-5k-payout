@@ -10,7 +10,7 @@ from backtest.engine_v2 import Trade
 
 
 MNQ_TICK_VALUE = 0.50
-MAX_CONTRACTS = 50
+MAX_CONTRACTS = 20
 
 
 def trades_to_daily_pnl(

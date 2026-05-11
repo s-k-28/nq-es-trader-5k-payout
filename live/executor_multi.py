@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 TICK_SIZE = 0.25
 MNQ_TICK_VALUE = 0.50
-MAX_CONTRACTS = 50
+MAX_CONTRACTS = 20
 CT = ZoneInfo('America/Chicago')
 ENTRY_TIMEOUT_SEC = 60
 STATE_DIR = 'live/state'

@@ -52,8 +52,8 @@ def main():
 |  Models:     9 (OU, PD, VWAP, OR, EMA, Sweep,              |
 |              Kalman, Trend, PM Mom)                          |
 |  Mode:       {args.env.upper():<47}|
-|  Risk tiers: OU $2,500 | PD $900 | rest $400               |
-|  Max MNQ:    50 contracts                                   |
+|  Risk tiers: OU $1,250 | PD $500 | rest $250               |
+|  Max MNQ:    20 contracts                                   |
 |  Exits:      BE 0.6R | Trail 0.001 | No partials           |
 |  Daily:      Win cap 2.0R | DLC $500 | CC 10               |
 |  Account:    $3K trailing DD, static at $3K peak            |
