@@ -297,6 +297,11 @@ class LiveExecutor:
         if risk <= 0:
             return
 
+        if sig.risk_ticks < self.cfg.risk.min_risk_ticks:
+            log.info(f"    SKIP -- stop too tight: {sig.risk_ticks:.0f} ticks "
+                     f"(min {self.cfg.risk.min_risk_ticks})")
+            return
+
         risk_per_contract = sig.risk_ticks * MNQ_TICK_VALUE
         if risk_per_contract <= 0:
             return
