@@ -540,7 +540,7 @@
         <div class="r-card"><div class="r-head"><div class="r-num red">&#x26A0;</div><h4>Daily Controls</h4></div>
           <p>Win cap: <span class="v">2.0R</span><br>Dollar loss cap: <span class="v">$500</span><br>Consec cooldown: <span class="v">10</span> losses<br>Signal cutoff: <span class="v">2:30 PM ET</span><br>Max concurrent: <span class="v">1</span></p></div>
         <div class="r-card"><div class="r-head"><div class="r-num amb">&#x2696;</div><h4>Position Sizing</h4></div>
-          <p>Formula: <span class="v">min(50, risk$ / (ticks * $0.50))</span><br>OU: <span class="v">$2,500</span> | PD: <span class="v">$900</span><br>Standard: <span class="v">$400</span> (7 models)<br>Max: <span class="v">50 MNQ</span></p></div>
+          <p>Formula: <span class="v">min(20, risk$ / (ticks * $0.50))</span><br>OU: <span class="v">$2,500</span> | PD: <span class="v">$900</span><br>Standard: <span class="v">$400</span> (7 models)<br>Max: <span class="v">20 MNQ</span><br>Min stop: <span class="v">100 ticks (25 pts)</span></p></div>
       </div>
     </div>
 
@@ -549,12 +549,12 @@
       <div class="rules-grid">
         <div class="ts-card eval"><h4>Evaluation</h4>
           <p>Profit target: <span class="v">$6,000</span><br>Trailing DD: <span class="v">$3,000</span><br>No static floor<br>No time limit</p>
-          <div class="mc-note"><strong>MC:</strong> <span class="v">89.4%</span> pass, median <span class="v">7 days</span></div></div>
+          <div class="mc-note"><strong>MC:</strong> <span class="v">99.0%</span> pass, median <span class="v">19 days</span></div></div>
         <div class="ts-card funded"><h4>Funded Account</h4>
           <p>Balance: <span class="v">$100,000</span><br>Trailing DD: <span class="v">$3,000</span><br>Static floor: <span class="v">$0</span> at peak >= $3K<br>DLC: <span class="v">$500/day</span></p></div>
         <div class="ts-card payout"><h4>Payouts</h4>
-          <p>Max: <span class="v">$5,000</span>/withdrawal<br>Cap: <span class="v">50%</span> of balance<br>Green day: <span class="v">$150</span> profit<br>Per payout: <span class="v">5</span> green days</p>
-          <div class="mc-note"><strong>MC:</strong> <span class="v">89%</span> P($10K in 60d)</div></div>
+          <p>Max: <span class="v">$5,000</span>/withdrawal<br>Cap: <span class="v">30%</span> of balance<br>Green day: <span class="v">$150</span> profit<br>Per payout: <span class="v">5</span> green days</p>
+          <div class="mc-note"><strong>MC:</strong> <span class="v">80%</span> P($10K in 60d)</div></div>
       </div>
     </div>
 
@@ -585,7 +585,7 @@ const MODEL_COLORS = {
 };
 
 const MODEL_RISK = { ou_rev: 2500, pd_rev: 900, vwap_rev: 400, ema_rev: 400, kalman_mom: 400, pm_mom: 400, sweep: 400, trend: 400, or_rev: 400 };
-const MNQ_TICK = 0.50, DLC = 500, MAX_CONTRACTS = 50;
+const MNQ_TICK = 0.50, DLC = 500, MAX_CONTRACTS = 20;
 
 function tradePnl(t) {
   const riskDol = MODEL_RISK[t.model] || 400;
@@ -801,22 +801,21 @@ function renderMonthlyTable() {
 
 function renderMC() {
   document.getElementById('mcGrid').innerHTML = [
-    { l:'Eval Pass Rate', v:'89.4%', c:'pos', s:'$6K target, ~7d median' },
-    { l:'P($10K+ Payout)', v:'89.0%', c:'pos', s:'25,000 funded sims' },
-    { l:'Survival Rate', v:'92.9%', c:'pos', s:'60 trading days' },
-    { l:'Avg Extraction', v:'$12,872', c:'amb', s:'per 60-day window' },
-    { l:'Median Extraction', v:'$14,000', c:'amb', s:'funded account' },
+    { l:'Eval Pass Rate', v:'99.0%', c:'pos', s:'$6K target, ~19d median' },
+    { l:'P($10K+ Payout)', v:'80.0%', c:'pos', s:'25,000 funded sims' },
+    { l:'Survival Rate', v:'98.6%', c:'pos', s:'60 trading days' },
+    { l:'Avg Extraction', v:'$13,814', c:'amb', s:'per 60-day window' },
+    { l:'Median Extraction', v:'$13,768', c:'amb', s:'funded account' },
     { l:'Trailing DD', v:'$3,000', c:'neg', s:'static at $0 floor' },
   ].map(s=>`<div class="mc-cell"><div class="mc-lbl">${s.l}</div><div class="mc-val ${s.c}">${s.v}</div><div class="mc-sub">${s.s}</div></div>`).join('');
-  document.getElementById('badgeP10K').textContent='P10K: 89%';
+  document.getElementById('badgeP10K').textContent='P10K: 80%';
 }
 
 function renderWF() {
   const d=[
-    {year:2023,p10k:'84.8%',surv:'85.6%',avgExt:'$11,979',wr:'63%',avgWin:'$1,536',avgLoss:'$717'},
-    {year:2024,p10k:'84.4%',surv:'84.7%',avgExt:'$12,177',wr:'65%',avgWin:'$1,608',avgLoss:'$743'},
-    {year:2025,p10k:'91.1%',surv:'91.1%',avgExt:'$13,680',wr:'66%',avgWin:'$1,798',avgLoss:'$768'},
-    {year:2026,p10k:'96.0%',surv:'96.2%',avgExt:'$13,441',wr:'67%',avgWin:'$1,856',avgLoss:'$712'},
+    {year:2023,p10k:'66.6%',surv:'98.6%',avgExt:'$11,599',wr:'66%',avgWin:'$560',avgLoss:'$306'},
+    {year:2024,p10k:'79.5%',surv:'98.4%',avgExt:'$13,283',wr:'66%',avgWin:'$628',avgLoss:'$318'},
+    {year:2025,p10k:'93.4%',surv:'98.9%',avgExt:'$16,924',wr:'68%',avgWin:'$708',avgLoss:'$335'},
   ];
   document.querySelector('#wfTable tbody').innerHTML=d.map(r=>`<tr>
     <td style="font-weight:600">${r.year}</td>
