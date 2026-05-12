@@ -26,7 +26,10 @@ from config import Config
 from data.loader import build_daily_bars
 from strategy.multi import MultiModelGenerator
 from strategy.models.base import Signal
-from live.broker_topstep import TopStepBroker, ORD_FILLED, ORD_CANCELLED, ORD_REJECTED, ORD_EXPIRED
+ORD_FILLED = 2
+ORD_CANCELLED = 3
+ORD_REJECTED = 5
+ORD_EXPIRED = 4
 from live.reporter import HubReporter
 from live.alerts import TelegramAlerts
 from live.adaptive import AdaptiveGuard
@@ -62,7 +65,7 @@ class LiveTrade:
 
 
 class LiveExecutor:
-    def __init__(self, cfg: Config, broker: TopStepBroker):
+    def __init__(self, cfg: Config, broker):
         self.cfg = cfg
         self.broker = broker
         self.reporter = HubReporter()
