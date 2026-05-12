@@ -77,8 +77,9 @@ class FundedAccountParams:
     ])
     model_risk_dollars: dict = field(default_factory=lambda: {
         'ou_rev': 2500, 'pd_rev': 900,
-        'vwap_rev': 400, 'ema_rev': 400, 'kalman_mom': 400,
-        'pm_mom': 400, 'sweep': 400, 'trend': 400, 'or_rev': 400,
+        'vwap_rev': 400, 'or_rev': 400, 'ou_lunch': 400,
+        'vwap_scalp': 400, 'open_drive': 400,
+        'trend': 400, 'pm_mom': 400,
     })
 
 

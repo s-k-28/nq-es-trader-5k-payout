@@ -49,8 +49,8 @@ def main():
 +============================================================+
 |          NQ TRADING BOT -- TOPSTEP 100K XFA                 |
 +============================================================+
-|  Models:     9 (OU, PD, VWAP, OR, EMA, Sweep,              |
-|              Kalman, Trend, PM Mom)                          |
+|  Models:     9 (OU, PD, VWAP, OR, OU-Lunch, VWAP-Scalp,    |
+|              Open-Drive, Trend, PM Mom)                      |
 |  Mode:       {args.env.upper():<47}|
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
 |  Max MNQ:    20 contracts | Min stop: 25 pts               |
