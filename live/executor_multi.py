@@ -159,13 +159,13 @@ class LiveExecutor:
         if today != self.cur_date:
             self._new_day(today)
 
-        if now.time() < dt_time(8, 30):
+        if now.time() < dt_time(5, 0):
             return
-        if now.time() >= dt_time(14, 55):
+        if now.time() >= dt_time(15, 55):
             if self.trade:
                 log.info("Session close -- flattening")
                 self._close_trade('session_close')
-            if now.time() >= dt_time(15, 0) and now.time() < dt_time(15, 1):
+            if now.time() >= dt_time(16, 0) and now.time() < dt_time(16, 1):
                 trades_today = sum(1 for k in self.daily_model_count.values())
                 wins = max(0, int(trades_today * (0.5 + self.daily_r / max(trades_today, 1) * 0.1))) if trades_today > 0 else 0
                 self.alerts.daily_summary(
@@ -249,7 +249,7 @@ class LiveExecutor:
 
     def _check_signals(self):
         now = datetime.now(CT)
-        if now.time() >= dt_time(14, 30):
+        if now.time() >= dt_time(15, 45):
             return
 
         if self.daily_r >= self.daily_win_cap:
@@ -436,7 +436,7 @@ class LiveExecutor:
             self._close_trade('time_stop')
             return
 
-        if datetime.now(CT).time() >= dt_time(14, 55):
+        if datetime.now(CT).time() >= dt_time(15, 55):
             log.info("    SESSION CLOSE")
             self._close_trade('session_close')
 
