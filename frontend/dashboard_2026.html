@@ -298,7 +298,7 @@ const MODEL_COLORS = {
 
 const MNQ_TICK = 0.50;
 const MAX_TRADE_LOSS = 500;
-const DAILY_CAP = 500;
+const DAILY_CAP = 1000;
 
 const MODEL_RISK = {
   ou_rev: 2500, pd_rev: 900, vwap_rev: 400, ema_rev: 400,
@@ -1032,7 +1032,7 @@ function renderFundedTab() {
   document.getElementById('fundedKPIs').innerHTML = [
     { l: 'P($10K) Overall', v: '97.90%', c: 'pos', s: 'Walk-forward MC 25K trials' },
     { l: 'Trailing DD', v: '$3,000', c: 'neg', s: 'TopStep 100K rule' },
-    { l: 'Dollar Loss Cap', v: '$500/day', c: '', s: 'Self-imposed risk limit' },
+    { l: 'Dollar Loss Cap', v: '$1,000/day', c: '', s: 'Self-imposed risk limit' },
     { l: 'Green Days Required', v: '5 days', c: '', s: '≥$150 net P&L each' },
     { l: 'Max Payout', v: '$5,000', c: 'pos', s: 'Per withdrawal' },
     { l: 'Payout %', v: '30%', c: '', s: 'Of account balance' },
@@ -1044,7 +1044,7 @@ function renderFundedTab() {
     ['Account Size', '$100,000'],
     ['Trailing Drawdown', '$3,000'],
     ['Static Floor', 'At $0 when peak ≥ $3,000'],
-    ['Dollar Loss Cap', '$500/day'],
+    ['Dollar Loss Cap', '$1,000/day'],
     ['Payout Balance %', '30%'],
     ['Max Payout', '$5,000'],
     ['Green Day Minimum', '$150'],
