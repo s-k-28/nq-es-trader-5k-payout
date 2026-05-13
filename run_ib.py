@@ -48,7 +48,7 @@ def main():
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
 |  Max MNQ:    20 contracts | Min stop: 25 pts               |
 |  Exits:      BE 0.6R | Trail 0.001 | No partials           |
-|  Daily:      Win cap 2.0R | DLC $500 | CC 10               |
+|  Daily:      Win cap 2.0R | DLC $1,000 | CC 10             |
 +------------------------------------------------------------+
 |  Press Ctrl+C to stop and flatten all positions             |
 +============================================================+
