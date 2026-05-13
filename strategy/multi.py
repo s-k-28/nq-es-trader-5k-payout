@@ -32,7 +32,7 @@ class MultiModelGenerator:
             sigs = model.generate(df, daily, context)
             all_signals.extend(sigs)
 
-        filtered = [s for s in all_signals if s.ts.time() < dt_time(14, 30)]
+        filtered = [s for s in all_signals if s.ts.time() < dt_time(15, 30)]
         filtered.sort(key=lambda s: s.idx)
         resolved = self._resolve_conflicts(filtered)
         return filter_by_quality(resolved, df)

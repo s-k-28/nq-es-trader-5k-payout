@@ -311,9 +311,20 @@ class IBBroker:
         summary['name'] = f'IB-{self.account_id}'
         return summary
 
+    def get_exit_fill_price(self) -> float | None:
+        """Return the fill price of the most recent execution on this contract."""
+        try:
+            fills = self.ib.fills()
+            contract_fills = [f for f in fills
+                              if f.contract.conId == self.contract_id]
+            if not contract_fills:
+                return None
+            contract_fills.sort(key=lambda f: f.time, reverse=True)
+            return contract_fills[0].execution.price
+        except Exception:
+            return None
+
     def _post(self, endpoint: str, payload: dict = None) -> dict:
-        """Compatibility shim for executor code that calls broker._post for trade history.
-        Returns empty result — IB PnL is tracked via account values instead."""
         if 'Trade/search' in endpoint:
             return {'trades': []}
         return {}

@@ -6,7 +6,7 @@ min(50, floor(risk_dollars / (risk_ticks * $0.50))).
 
 Risk controls (matching backtest engine_v2 + funded_sim):
 - Daily win cap: 2.0R total, stop taking signals
-- Dollar loss cap: $500/day, skip trades once breached
+- Dollar loss cap: $1,000/day, skip trades once breached
 - Consecutive loss cooldown: 10 losses, skip next signal
 - No daily R loss limit (allows intraday recovery)
 - BE at 0.6R, trail at 0.001, pp=0.0 (from model risk profiles)
@@ -504,6 +504,17 @@ class LiveExecutor:
                       if tr.get('contractId') == self.broker.contract_id)
         except Exception:
             pnl = 0
+
+        if pnl == 0:
+            exit_price = None
+            if hasattr(self.broker, 'get_exit_fill_price'):
+                exit_price = self.broker.get_exit_fill_price()
+            if exit_price is None and not self.buf.empty:
+                exit_price = self.buf.iloc[-1]['close']
+            if exit_price is not None:
+                is_long = t.direction == 'long'
+                raw = (exit_price - t.entry_price) if is_long else (t.entry_price - exit_price)
+                pnl = raw * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
 
         risk_usd = t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
         total_r = pnl / risk_usd if risk_usd > 0 else 0

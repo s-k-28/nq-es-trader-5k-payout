@@ -394,7 +394,7 @@ class TestExecutorRiskControls:
 
     def test_dlc_blocks_signals(self, cfg, mock_broker_connected):
         executor = self._make_executor(cfg, mock_broker_connected)
-        executor.daily_pnl_usd = -600
+        executor.daily_pnl_usd = -1100
         executor._check_signals()
         executor.gen.generate.assert_not_called()
 

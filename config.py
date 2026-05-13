@@ -71,7 +71,7 @@ class FundedAccountParams:
     max_payout: float = 5000.0
     payout_balance_pct: float = 0.30
     green_days_per_payout: int = 5
-    dollar_loss_cap: float = 500.0
+    dollar_loss_cap: float = 1000.0
     post_static_scaling: list = field(default_factory=lambda: [
         (3000, 1.0), (0, 1.0),
     ])
