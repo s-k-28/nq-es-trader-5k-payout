@@ -19,9 +19,9 @@ class OUReversionModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=12, max_risk_ticks=100, min_rr=1.5,
+            min_risk_ticks=40, max_risk_ticks=100, min_rr=1.5,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
-            time_stop_minutes=35, max_daily=4,
+            time_stop_minutes=35, max_daily=6,
             trail_pct=0.0015,
         )
         super().__init__(cfg, rp)
@@ -87,7 +87,7 @@ class OUReversionModel(BaseModel):
 
                 entry = bar['close']
                 extreme_low = min(bar['low'], prev1['low'])
-                stop = extreme_low - 2 * self.tick
+                stop = extreme_low - 4 * self.tick
                 risk = entry - stop
                 target = vwap
                 reward = target - entry
@@ -108,7 +108,7 @@ class OUReversionModel(BaseModel):
 
                 entry = bar['close']
                 extreme_high = max(bar['high'], prev1['high'])
-                stop = extreme_high + 2 * self.tick
+                stop = extreme_high + 4 * self.tick
                 risk = stop - entry
                 target = vwap
                 reward = entry - target

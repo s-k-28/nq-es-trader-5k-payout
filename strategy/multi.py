@@ -5,7 +5,7 @@ import numpy as np
 from datetime import time as dt_time
 from config import Config
 from strategy.vwap import compute_vwap, compute_opening_range
-from strategy.models.base import Signal
+from strategy.models.base import Signal, GLOBAL_MIN_RISK_TICKS
 from strategy.models import ALL_MODELS
 from strategy.quality import filter_by_quality
 
@@ -32,10 +32,63 @@ class MultiModelGenerator:
             sigs = model.generate(df, daily, context)
             all_signals.extend(sigs)
 
+        all_signals = self._apply_atr_hybrid_wider(all_signals, df)
+
         filtered = [s for s in all_signals if s.ts.time() < dt_time(15, 30)]
         filtered.sort(key=lambda s: s.idx)
         resolved = self._resolve_conflicts(filtered)
         return filter_by_quality(resolved, df)
+
+    def _apply_atr_hybrid_wider(self, signals: list[Signal],
+                                df: pd.DataFrame) -> list[Signal]:
+        atr_len = self.cfg.strategy.atr_stop_length
+        factor = self.cfg.strategy.atr_stop_factor
+        atr_col = f'atr_{atr_len}'
+        if atr_col not in df.columns:
+            return signals
+
+        result = []
+        for sig in signals:
+            if sig.idx >= len(df):
+                result.append(sig)
+                continue
+
+            atr_val = df.iloc[sig.idx].get(atr_col)
+            if pd.isna(atr_val) or atr_val <= 0:
+                result.append(sig)
+                continue
+
+            atr_stop_dist = atr_val * factor
+            model_stop_dist = abs(sig.entry - sig.stop)
+
+            if atr_stop_dist > model_stop_dist:
+                if sig.direction == 'long':
+                    new_stop = sig.entry - atr_stop_dist
+                else:
+                    new_stop = sig.entry + atr_stop_dist
+
+                new_stop = round(new_stop / self.tick) * self.tick
+                new_risk = abs(sig.entry - new_stop)
+                new_risk_ticks = new_risk / self.tick
+
+                if new_risk_ticks < GLOBAL_MIN_RISK_TICKS:
+                    result.append(sig)
+                    continue
+
+                new_reward = abs(sig.target - sig.entry)
+                new_rr = new_reward / new_risk if new_risk > 0 else 0
+
+                rp = sig.risk_profile
+                if rp and new_rr < rp.min_rr:
+                    continue
+
+                sig.stop = new_stop
+                sig.risk_ticks = new_risk_ticks
+                sig.reward_ticks = new_reward / self.tick
+                sig.rr = new_rr
+
+            result.append(sig)
+        return result
 
     def _build_context(self, daily: pd.DataFrame) -> dict:
         daily_map = {}
@@ -82,7 +135,7 @@ class MultiModelGenerator:
         return out
 
     @staticmethod
-    def _resolve_conflicts(signals: list[Signal], cooldown_bars: int = 5) -> list[Signal]:
+    def _resolve_conflicts(signals: list[Signal], cooldown_bars: int = 3) -> list[Signal]:
         if not signals:
             return []
 

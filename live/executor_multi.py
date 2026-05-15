@@ -39,6 +39,7 @@ log = logging.getLogger(__name__)
 TICK_SIZE = 0.25
 MNQ_TICK_VALUE = 0.50
 MAX_CONTRACTS = 20
+MIN_RISK_TICKS = 40
 CT = ZoneInfo('America/Chicago')
 ENTRY_TIMEOUT_SEC = 60
 STATE_DIR = 'live/state'
@@ -346,6 +347,17 @@ class LiveExecutor:
                  f"RR: {sig.rr:.1f} | Risk: {sig.risk_ticks:.0f} ticks | "
                  f"Max loss: ${potential_loss:,.0f}")
 
+        actual_risk_ticks = abs(sig.entry - sig.stop) / TICK_SIZE
+        stop_price = sig.stop
+        if actual_risk_ticks < MIN_RISK_TICKS:
+            if sig.direction == 'long':
+                stop_price = sig.entry - MIN_RISK_TICKS * TICK_SIZE
+            else:
+                stop_price = sig.entry + MIN_RISK_TICKS * TICK_SIZE
+            stop_price = round(stop_price / TICK_SIZE) * TICK_SIZE
+            log.warning(f"    STOP WIDENED: {actual_risk_ticks:.0f} -> {MIN_RISK_TICKS} ticks "
+                        f"({sig.stop:.2f} -> {stop_price:.2f})")
+
         try:
             entry_id = self.broker.place_limit_entry(
                 direction=sig.direction,
@@ -360,7 +372,7 @@ class LiveExecutor:
             signal=sig,
             direction=sig.direction,
             entry_price=sig.entry,
-            stop_price=sig.stop,
+            stop_price=stop_price,
             target_price=sig.target,
             risk=risk,
             entry_time=datetime.now(CT),

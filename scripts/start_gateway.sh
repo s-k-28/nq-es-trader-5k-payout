@@ -31,5 +31,8 @@ java \
   --add-exports=java.desktop/sun.swing=ALL-UNNAMED \
   --add-opens=jdk.management/com.sun.management.internal=ALL-UNNAMED \
   -Xmx512m \
+  -Djavax.accessibility.assistive_technologies=" " \
+  -Dsun.java2d.xrender=false \
+  -Djava.awt.headless=false \
   -cp "jars/*:$IBC_JAR" \
-  ibcalpha.ibc.IbcGateway "$IBC_INI"
+  ibcalpha.ibc.IbcGateway "$IBC_INI" 2>&1 | tee /tmp/gw.log

@@ -181,10 +181,26 @@ def compute_bb_squeeze(df: pd.DataFrame, period: int = 20, std: float = 2.0,
     return df
 
 
+def compute_atr(df: pd.DataFrame, period: int = 5) -> pd.DataFrame:
+    high = df['high']
+    low = df['low']
+    prev_close = df['close'].shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(period, min_periods=period).mean()
+    df = df.copy()
+    df[f'atr_{period}'] = atr.values
+    return df
+
+
 def compute_all_quant_features(df: pd.DataFrame) -> pd.DataFrame:
     df = compute_ou_params(df)
     df = compute_hurst(df)
     df = compute_kalman(df)
     df = compute_parkinson_vol(df)
     df = compute_bb_squeeze(df)
+    df = compute_atr(df, period=5)
     return df

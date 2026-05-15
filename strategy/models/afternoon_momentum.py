@@ -12,7 +12,7 @@ class AfternoonMomentumModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=10, max_risk_ticks=40, min_rr=1.5,
+            min_risk_ticks=40, max_risk_ticks=80, min_rr=1.5,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=30, max_daily=1,
             trail_pct=0.001,
@@ -57,7 +57,7 @@ class AfternoonMomentumModel(BaseModel):
                     and regime != 'bear'):
                 if bar['low'] <= level + 5 * self.tick and bar['close'] > level:
                     entry = bar['close']
-                    stop = min(bar['low'], level) - 2 * self.tick
+                    stop = min(bar['low'], level) - 4 * self.tick
                     risk = entry - stop
                     target = entry + risk * 2.0
                     reward = target - entry
@@ -72,7 +72,7 @@ class AfternoonMomentumModel(BaseModel):
                     and regime != 'bull'):
                 if bar['high'] >= level - 5 * self.tick and bar['close'] < level:
                     entry = bar['close']
-                    stop = max(bar['high'], level) + 2 * self.tick
+                    stop = max(bar['high'], level) + 4 * self.tick
                     risk = stop - entry
                     target = entry - risk * 2.0
                     reward = entry - target

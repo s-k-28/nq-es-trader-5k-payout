@@ -12,7 +12,7 @@ class VWAPReversionModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=12, max_risk_ticks=50, min_rr=1.3,
+            min_risk_ticks=40, max_risk_ticks=50, min_rr=1.3,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=40, max_daily=2,
             trail_pct=0.001,
@@ -59,7 +59,7 @@ class VWAPReversionModel(BaseModel):
                     and bar['close'] > prev['low']
                     and regime != 'bear'):
                 entry = bar['close']
-                stop = min(bar['low'], prev['low']) - 2 * self.tick
+                stop = min(bar['low'], prev['low']) - 4 * self.tick
                 risk = entry - stop
                 target = vwap
                 reward = target - entry
@@ -74,7 +74,7 @@ class VWAPReversionModel(BaseModel):
                     and bar['close'] < prev['high']
                     and regime != 'bull'):
                 entry = bar['close']
-                stop = max(bar['high'], prev['high']) + 2 * self.tick
+                stop = max(bar['high'], prev['high']) + 4 * self.tick
                 risk = stop - entry
                 target = vwap
                 reward = entry - target

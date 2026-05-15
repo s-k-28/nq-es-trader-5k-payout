@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate comprehensive equity curve dashboard with multiple charts."""
-import sys
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import numpy as np
 import pandas as pd
 import matplotlib

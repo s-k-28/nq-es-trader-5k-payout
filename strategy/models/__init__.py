@@ -7,6 +7,9 @@ from strategy.models.pd_level_reversion import PDLevelReversionModel
 from strategy.models.ou_lunch import OULunchZoneModel
 from strategy.models.vwap_scalper import VWAPBandScalperModel
 from strategy.models.opening_drive import OpeningDriveModel
+from strategy.models.ema_reversion import EMAReversionModel
+from strategy.models.kalman_momentum import KalmanMomentumModel
+from strategy.models.sweep_reversal import SweepReversalModel
 
 ALL_MODELS = [
     OUReversionModel,
@@ -18,4 +21,7 @@ ALL_MODELS = [
     OpeningDriveModel,
     TrendContinuationModel,
     AfternoonMomentumModel,
+    EMAReversionModel,
+    KalmanMomentumModel,
+    SweepReversalModel,
 ]

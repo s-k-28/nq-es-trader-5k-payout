@@ -4,6 +4,7 @@ import sys
 import os
 import time
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, os.path.dirname(__file__))
 
 from optimize_p10k import walk_forward_p10k

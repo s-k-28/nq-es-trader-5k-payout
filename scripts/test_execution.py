@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from live.broker_topstep import TopStepBroker, BUY, SELL, MARKET
 
 

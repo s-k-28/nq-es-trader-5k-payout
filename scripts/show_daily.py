@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Show day-by-day funded eval simulation — what it looks like in practice."""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import argparse
 import pandas as pd
 import numpy as np

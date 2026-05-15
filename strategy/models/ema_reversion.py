@@ -12,7 +12,7 @@ class EMAReversionModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=15, max_risk_ticks=60, min_rr=1.3,
+            min_risk_ticks=40, max_risk_ticks=60, min_rr=1.3,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=35, max_daily=1,
             trail_pct=0.001,
@@ -62,7 +62,7 @@ class EMAReversionModel(BaseModel):
                     and bar['close'] > prev['low']
                     and regime != 'bear'):
                 entry = bar['close']
-                stop = min(bar['low'], prev['low']) - 2 * self.tick
+                stop = min(bar['low'], prev['low']) - 4 * self.tick
                 risk = entry - stop
                 target = e
                 reward = target - entry
@@ -77,7 +77,7 @@ class EMAReversionModel(BaseModel):
                     and bar['close'] < prev['high']
                     and regime != 'bull'):
                 entry = bar['close']
-                stop = max(bar['high'], prev['high']) + 2 * self.tick
+                stop = max(bar['high'], prev['high']) + 4 * self.tick
                 risk = stop - entry
                 target = e
                 reward = entry - target

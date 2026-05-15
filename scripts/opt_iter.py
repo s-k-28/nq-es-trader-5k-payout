@@ -20,10 +20,13 @@ def write_file(path, content):
 
 def evaluate():
     """Run optimize_p10k.py as a subprocess so all imports are fresh."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.join(script_dir, '..')
     result = subprocess.run(
-        [sys.executable, '-c', '''
+        [sys.executable, '-c', f'''
 import sys, os
-sys.path.insert(0, ".")
+sys.path.insert(0, {repr(project_dir)})
+sys.path.insert(0, {repr(script_dir)})
 from optimize_p10k import walk_forward_p10k
 from config import Config
 import json

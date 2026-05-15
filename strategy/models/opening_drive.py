@@ -17,7 +17,7 @@ class OpeningDriveModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=10, max_risk_ticks=60, min_rr=1.5,
+            min_risk_ticks=40, max_risk_ticks=60, min_rr=1.5,
             be_trigger_rr=0.5, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=30, max_daily=2,
             trail_pct=0.001,
@@ -93,7 +93,7 @@ class OpeningDriveModel(BaseModel):
                         and bar['close'] > bar['open']
                         and (pd.isna(slope) or slope > -0.1)):
                     entry = bar['close']
-                    stop = min(bar['low'], day_low_930) - 2 * self.tick
+                    stop = min(bar['low'], day_low_930) - 4 * self.tick
                     risk = entry - stop
                     target = entry + risk * 2.0
                     reward = target - entry
@@ -110,7 +110,7 @@ class OpeningDriveModel(BaseModel):
                         and bar['close'] < bar['open']
                         and (pd.isna(slope) or slope < 0.1)):
                     entry = bar['close']
-                    stop = max(bar['high'], day_high_930) + 2 * self.tick
+                    stop = max(bar['high'], day_high_930) + 4 * self.tick
                     risk = stop - entry
                     target = entry - risk * 2.0
                     reward = entry - target

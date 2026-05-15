@@ -17,7 +17,7 @@ class OULunchZoneModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=10, max_risk_ticks=60, min_rr=1.5,
+            min_risk_ticks=40, max_risk_ticks=60, min_rr=1.5,
             be_trigger_rr=0.5, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=25, max_daily=3,
             trail_pct=0.001,
@@ -82,7 +82,7 @@ class OULunchZoneModel(BaseModel):
 
                 entry = bar['close']
                 extreme_low = min(bar['low'], prev1['low'])
-                stop = extreme_low - 2 * self.tick
+                stop = extreme_low - 4 * self.tick
                 risk = entry - stop
                 target = vwap
                 reward = target - entry
@@ -102,7 +102,7 @@ class OULunchZoneModel(BaseModel):
 
                 entry = bar['close']
                 extreme_high = max(bar['high'], prev1['high'])
-                stop = extreme_high + 2 * self.tick
+                stop = extreme_high + 4 * self.tick
                 risk = stop - entry
                 target = vwap
                 reward = entry - target

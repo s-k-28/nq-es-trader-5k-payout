@@ -13,7 +13,7 @@ class TrendContinuationModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=20, max_risk_ticks=120, min_rr=2.0,
+            min_risk_ticks=40, max_risk_ticks=120, min_rr=2.0,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=45, max_daily=5,
             trail_pct=0.001,
@@ -88,7 +88,7 @@ class TrendContinuationModel(BaseModel):
 
                 entry = bar['close']
                 pullback_low = min(bar['low'], prev1['low'])
-                stop = pullback_low - 2 * self.tick
+                stop = pullback_low - 4 * self.tick
                 risk = entry - stop
 
                 recent_high = df.iloc[max(0, idx - 20):idx]['high'].max()
@@ -110,7 +110,7 @@ class TrendContinuationModel(BaseModel):
 
                 entry = bar['close']
                 pullback_high = max(bar['high'], prev1['high'])
-                stop = pullback_high + 2 * self.tick
+                stop = pullback_high + 4 * self.tick
                 risk = stop - entry
 
                 recent_low = df.iloc[max(0, idx - 20):idx]['low'].min()

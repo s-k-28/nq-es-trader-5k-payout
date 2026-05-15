@@ -17,7 +17,7 @@ class VWAPBandScalperModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=8, max_risk_ticks=50, min_rr=1.3,
+            min_risk_ticks=40, max_risk_ticks=50, min_rr=1.3,
             be_trigger_rr=0.5, partial_rr=0.4, partial_pct=0.0,
             time_stop_minutes=20, max_daily=3,
             trail_pct=0.001,
@@ -70,7 +70,7 @@ class VWAPBandScalperModel(BaseModel):
                     continue
 
                 entry = bar['close']
-                stop = min(bar['low'], prev1['low']) - 2 * self.tick
+                stop = min(bar['low'], prev1['low']) - 4 * self.tick
                 risk = entry - stop
                 target = entry + (vwap - entry) * 0.5
                 reward = target - entry
@@ -89,7 +89,7 @@ class VWAPBandScalperModel(BaseModel):
                     continue
 
                 entry = bar['close']
-                stop = max(bar['high'], prev1['high']) + 2 * self.tick
+                stop = max(bar['high'], prev1['high']) + 4 * self.tick
                 risk = stop - entry
                 target = entry - (entry - vwap) * 0.5
                 reward = entry - target

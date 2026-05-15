@@ -7,7 +7,7 @@ from __future__ import annotations
 import pandas as pd
 from strategy.models.base import Signal
 
-MIN_QUALITY_SCORE = 4
+MIN_QUALITY_SCORE = 3
 
 
 def score_signal(sig: Signal, df: pd.DataFrame) -> int:

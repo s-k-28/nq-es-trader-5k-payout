@@ -22,7 +22,7 @@ class SweepReversalModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=10, max_risk_ticks=80, min_rr=2.0,
+            min_risk_ticks=40, max_risk_ticks=80, min_rr=2.0,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=30, max_daily=2,
             trail_pct=0.001,
@@ -130,7 +130,7 @@ class SweepReversalModel(BaseModel):
 
         entry = bar['close']
         sweep_extreme = max(prev1['high'], bar['high'])
-        stop = sweep_extreme + 2 * self.tick
+        stop = sweep_extreme + 4 * self.tick
         risk = stop - entry
 
         target_level = vwap
@@ -172,7 +172,7 @@ class SweepReversalModel(BaseModel):
 
         entry = bar['close']
         sweep_extreme = min(prev1['low'], bar['low'])
-        stop = sweep_extreme - 2 * self.tick
+        stop = sweep_extreme - 4 * self.tick
         risk = entry - stop
 
         target = max(vwap + (vwap - sweep_extreme), entry + risk * 2.5)

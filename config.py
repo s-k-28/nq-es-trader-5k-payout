@@ -42,6 +42,8 @@ class StrategyParams:
     fvg_max_wait_candles: int = 10
     use_intermarket: bool = True
     time_stop_minutes: int = 45
+    atr_stop_length: int = 5
+    atr_stop_factor: float = 0.80
 
 
 @dataclass

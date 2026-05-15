@@ -12,7 +12,7 @@ class PDLevelReversionModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=12, max_risk_ticks=60, min_rr=1.5,
+            min_risk_ticks=40, max_risk_ticks=60, min_rr=1.5,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=35, max_daily=1,
             trail_pct=0.001,
@@ -60,7 +60,7 @@ class PDLevelReversionModel(BaseModel):
                     and bar['close'] < bar['open']):
                 if abs(bar['close'] - pdh) < 20 * self.tick:
                     entry = bar['close']
-                    stop = max(prev['high'], bar['high']) + 2 * self.tick
+                    stop = max(prev['high'], bar['high']) + 4 * self.tick
                     risk = stop - entry
                     target = min(vwap, entry - risk * 2.0)
                     reward = entry - target
@@ -76,7 +76,7 @@ class PDLevelReversionModel(BaseModel):
                     and bar['close'] > bar['open']):
                 if abs(bar['close'] - pdl) < 20 * self.tick:
                     entry = bar['close']
-                    stop = min(prev['low'], bar['low']) - 2 * self.tick
+                    stop = min(prev['low'], bar['low']) - 4 * self.tick
                     risk = entry - stop
                     target = max(vwap, entry + risk * 2.0)
                     reward = target - entry

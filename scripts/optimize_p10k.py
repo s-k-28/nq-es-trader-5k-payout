@@ -11,7 +11,7 @@ import json
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from config import Config
 from data.loader import load_csv, build_daily_bars

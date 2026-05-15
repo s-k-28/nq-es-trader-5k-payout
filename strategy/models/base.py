@@ -35,6 +35,9 @@ class Signal:
     risk_profile: ModelRiskProfile | None = None
 
 
+GLOBAL_MIN_RISK_TICKS = 40  # 10 points — hard floor, no model can go below
+
+
 class BaseModel(ABC):
     name: str = 'base'
     priority: int = 50
@@ -52,7 +55,8 @@ class BaseModel(ABC):
     def _risk_ok(self, risk: float, reward: float) -> bool:
         rp = self.risk_profile
         ticks = risk / self.tick
-        if not (rp.min_risk_ticks <= ticks <= rp.max_risk_ticks):
+        floor = max(rp.min_risk_ticks, GLOBAL_MIN_RISK_TICKS)
+        if not (floor <= ticks <= rp.max_risk_ticks):
             return False
         if risk <= 0:
             return False

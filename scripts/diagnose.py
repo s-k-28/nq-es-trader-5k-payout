@@ -1,4 +1,6 @@
 """Deep diagnostic: find exactly where R is lost and what to fix."""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import pandas as pd
 import numpy as np
 from datetime import time as dt_time
@@ -173,7 +175,6 @@ print("\n" + "=" * 70)
 print("  REGIME PERFORMANCE")
 print("=" * 70)
 # Rebuild regime map
-from strategy.multi import MultiModelGenerator
 mg = MultiModelGenerator(cfg)
 daily_s = daily.sort_values('date').reset_index(drop=True)
 ctx = mg._build_context(daily)

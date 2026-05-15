@@ -12,7 +12,7 @@ class ORReversionModel(BaseModel):
 
     def __init__(self, cfg: Config):
         rp = ModelRiskProfile(
-            min_risk_ticks=10, max_risk_ticks=60, min_rr=1.5,
+            min_risk_ticks=40, max_risk_ticks=60, min_rr=1.5,
             be_trigger_rr=0.6, partial_rr=0.5, partial_pct=0.0,
             time_stop_minutes=35, max_daily=1,
             trail_pct=0.001,
@@ -72,7 +72,7 @@ class ORReversionModel(BaseModel):
                     and prev['low'] < or_low - 3 * self.tick
                     and regime != 'bear'):
                 entry = bar['close']
-                stop = min(bar['low'], prev['low']) - 2 * self.tick
+                stop = min(bar['low'], prev['low']) - 4 * self.tick
                 risk = entry - stop
                 target = or_mid
                 reward = target - entry
@@ -87,7 +87,7 @@ class ORReversionModel(BaseModel):
                     and prev['high'] > or_high + 3 * self.tick
                     and regime != 'bull'):
                 entry = bar['close']
-                stop = max(bar['high'], prev['high']) + 2 * self.tick
+                stop = max(bar['high'], prev['high']) + 4 * self.tick
                 risk = stop - entry
                 target = or_mid
                 reward = entry - target

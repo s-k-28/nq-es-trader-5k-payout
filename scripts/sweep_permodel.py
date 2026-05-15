@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Per-model parameter sweep — test if individual models benefit from
 different partial_pct, trail_pct, or time_stop settings."""
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import argparse
 import copy
 import pandas as pd
