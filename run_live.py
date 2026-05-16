@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-NQ 9-Model Trading Bot -- TopStepX 100K
-Connects to TopStepX via REST API, runs all 9 models with model-tiered risk.
+NQ 12-Model Trading Bot -- TopStepX 100K
+Connects to TopStepX via REST API, runs all 12 models with model-tiered risk.
 
 Usage:
   python run_live.py              # uses .env file
@@ -49,8 +49,8 @@ def main():
 +============================================================+
 |          NQ TRADING BOT -- TOPSTEP 100K XFA                 |
 +============================================================+
-|  Models:     9 (OU, PD, VWAP, OR, OU-Lunch, VWAP-Scalp,    |
-|              Open-Drive, Trend, PM Mom)                      |
+|  Models:     12 (OU, PD, VWAP, OR, OU-Lunch, VWAP-Scalp,   |
+|              Open-Drive, Trend, PM Mom, EMA, Kalman, Sweep)  |
 |  Mode:       {args.env.upper():<47}|
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
 |  Max MNQ:    20 contracts | Min stop: 25 pts               |

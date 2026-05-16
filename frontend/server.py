@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dashboard server — serves trade data + static frontend for the 9-model strategy."""
+"""Dashboard server — serves trade data + static frontend for the 12-model strategy."""
 import http.server
 import json
 import csv

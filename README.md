@@ -2,13 +2,13 @@
   <h1 align="center">NQ-ES Trader</h1>
   <p align="center">
     Autonomous MNQ futures trading system for TopStepX 100K funded accounts.<br>
-    9 quantitative models. Model-tiered risk. Monte Carlo validated.
+    12 quantitative models. Model-tiered risk. Monte Carlo validated.
   </p>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10+-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/Models-9-22c55e?style=flat-square" alt="Models">
+  <img src="https://img.shields.io/badge/Models-12-22c55e?style=flat-square" alt="Models">
   <img src="https://img.shields.io/badge/Account-TopStepX%20100K-f59e0b?style=flat-square" alt="Account">
   <img src="https://img.shields.io/badge/Eval%20Pass-89.4%25-3b82f6?style=flat-square" alt="Eval Pass Rate">
 </p>
@@ -17,7 +17,7 @@
 
 ## What This Does
 
-This system trades MNQ (Micro E-mini Nasdaq) futures on TopStepX 100K funded accounts. It runs 9 independent quantitative models during regular trading hours, each generating signals based on different market conditions. All models share identical exit mechanics, and a priority-based conflict resolver ensures only one trade is active at a time.
+This system trades MNQ (Micro E-mini Nasdaq) futures on TopStepX 100K funded accounts. It runs 12 independent quantitative models during regular trading hours, each generating signals based on different market conditions. All models share identical exit mechanics, and a priority-based conflict resolver ensures only one trade is active at a time.
 
 **Backtest and live execution use the exact same config.** What you see in the charts is what runs on your account.
 
@@ -96,8 +96,8 @@ python3 --version
 ### Step 2. Clone and Install
 
 ```bash
-git clone https://github.com/s-k-28/nq-es-trader-2.git
-cd nq-es-trader-2
+git clone https://github.com/s-k-28/nq-es-trader-5k-payout.git
+cd nq-es-trader-5k-payout
 pip install -r requirements.txt
 ```
 
@@ -109,7 +109,7 @@ This installs: `pandas`, `numpy`, `matplotlib`, `tabulate`, `requests`, `python-
 python generate_charts.py
 ```
 
-This runs the full 9-model backtest on 2022-2026 data and produces:
+This runs the full 12-model backtest on 2022-2026 data and produces:
 - 6 chart PNG files in the project root
 - Eval pass Monte Carlo simulation (25,000 runs)
 - Funded account Monte Carlo simulation (25,000 runs)
@@ -128,7 +128,7 @@ Open **http://localhost:8080** in your browser. The dashboard has four tabs:
 | **Interactive Charts** | Equity curve, per-model equity, monthly P&L, win rates, R distribution, day-of-week and hour analysis. Filter by time period and toggle individual models on/off. |
 | **Deep Analysis** | Pre-rendered matplotlib charts: equity/drawdown, model breakdown, monthly heatmap, timing analysis, walk-forward validation. |
 | **Monte Carlo** | Eval pass rate simulation, funded account simulation, probability outcomes across 25,000 runs. |
-| **Strategy Rules** | Complete reference for all 9 models, exit mechanics, risk sizing, daily controls, and TopStepX account rules. |
+| **Strategy Rules** | Complete reference for all 12 models, exit mechanics, risk sizing, daily controls, and TopStepX account rules. |
 
 ---
 
@@ -181,10 +181,12 @@ You should see output like this:
 +============================================================+
 |          NQ TRADING BOT -- TOPSTEP 100K XFA                 |
 +============================================================+
-|  Models:     9 (OU, PD, VWAP, OR, EMA, Sweep,              |
-|              Kalman, Trend, PM Mom)                          |
+|  Models:     12 (OU, PD, VWAP, OR, OU-Lunch, VWAP-Scalp,   |
+|              Open-Drive, Trend, PM Mom, EMA, Kalman, Sweep)  |
 |  Mode:       DEMO                                           |
-|  Risk tiers: OU $2,500 | PD $1,200 | rest $600             |
+|  Risk tiers: OU $2,500 | PD $900 | rest $400               |
+|  Daily:      Win cap 2.0R | DLC $1,000 | CC 10             |
+|  Payouts:    $5K max, 30% bal, 5 green days ($150+)         |
 +============================================================+
 ```
 
@@ -202,7 +204,7 @@ The bot will:
 1. Authenticate with TopStepX via REST API
 2. Load approximately 83 days of 1-minute history for regime warmup
 3. Detect the current front-month MNQ contract automatically
-4. Begin trading all 9 models autonomously
+4. Begin trading all 12 models autonomously
 
 **To stop the bot:** Press `Ctrl+C`. This flattens all open positions and cancels pending orders before exiting.
 
@@ -219,19 +221,22 @@ The bot will:
 
 ## Strategy
 
-### 9-Model Architecture
+### 12-Model Architecture
 
 | # | Model | Type | Priority | Risk/Trade | Description |
 |:--|:--|:--|--:|--:|:--|
 | 1 | OU Reversion | Mean-reversion | 15 | $2,500 | Ornstein-Uhlenbeck on price-VWAP deviation. Trades when half-life is short and Hurst < 0.45. Quality-filtered (Q >= 4). |
-| 2 | PD Level Reversion | Mean-reversion | 22 | $1,200 | Fades at previous day high/low with reversal candle confirmation. |
-| 3 | VWAP Reversion | Mean-reversion | 25 | $600 | Bidirectional VWAP z-score fade. Z > 2.0 short, Z < -2.0 long. Targets snap-back to session VWAP. |
-| 4 | Opening Range Rev | Mean-reversion | 28 | $600 | Fades extended moves beyond first 15 min of RTH back to OR midpoint. Window: 10:00-12:00 ET. |
-| 5 | EMA Reversion | Mean-reversion | 30 | $600 | Fades when price extends 2.5+ standard deviations from 20-period EMA. Window: 9:50-14:30 ET. |
-| 6 | Sweep Reversal | Mean-reversion | 35 | $600 | Liquidity sweep at PDH/PDL/session extremes followed by immediate reversal. Detects stop hunts. |
-| 7 | Kalman Momentum | Momentum | 40 | $600 | Trades Kalman filter slope direction when Hurst >= 0.5. Requires 5-bar slope consistency. Window: 10:15-14:00 ET. |
-| 8 | Trend Continuation | Momentum | 40 | $600 | Follows EMA/regime trends with fair value gap (FVG) pullback entries. |
-| 9 | PM Momentum | Momentum | 50 | $600 | Afternoon session Kalman slope pullback model. Window: 13:30-15:00 ET. |
+| 2 | OU Lunch Zone | Mean-reversion | 16 | $400 | Dedicated lunch-window OU fade. Uses tighter z-score and Hurst filters during 11:30-13:30 ET. |
+| 3 | PD Level Reversion | Mean-reversion | 22 | $900 | Fades at previous day high/low with reversal candle confirmation. |
+| 4 | VWAP Reversion | Mean-reversion | 25 | $400 | Bidirectional VWAP standard-deviation fade. Targets snap-back to session VWAP. |
+| 5 | VWAP Band Scalper | Mean-reversion | 25 | $400 | Faster VWAP/OU band fade with partial move-to-VWAP target and shorter time stop. |
+| 6 | Opening Range Rev | Mean-reversion | 28 | $400 | Fades extended moves beyond first 15 min of RTH back to OR midpoint. Window: 10:00-12:00 ET. |
+| 7 | EMA Reversion | Mean-reversion | 30 | $400 | Fades when price extends 2.5+ standard deviations from 20-period EMA. Window: 9:50-14:30 ET. |
+| 8 | Sweep Reversal | Mean-reversion | 35 | $400 | Liquidity sweep at PDH/PDL/session extremes followed by immediate reversal. Detects stop hunts. |
+| 9 | Opening Drive | Momentum | 12 | $400 | Trades early RTH drive pullbacks toward VWAP after a strong 9:30-9:35 push. |
+| 10 | Kalman Momentum | Momentum | 40 | $400 | Trades Kalman filter slope direction when Hurst >= 0.5. Requires 5-bar slope consistency. Window: 10:15-14:00 ET. |
+| 11 | Trend Continuation | Momentum | 40 | $400 | Follows EMA/regime trends with pullback entries. |
+| 12 | PM Momentum | Momentum | 50 | $400 | Afternoon session Kalman slope pullback model. Window: 13:30-15:00 ET. |
 
 ### Per-Model Results
 
@@ -252,9 +257,9 @@ The bot will:
 ```
 1-min bars --> compute_vwap() + compute_opening_range()
           --> compute_all_quant_features() (OU, Hurst, Kalman, Parkinson, BB)
-          --> 9 models generate signals independently
-          --> filter: cut off after 2:30 PM ET
-          --> resolve conflicts: 5-bar cooldown, priority-based (lower # wins)
+          --> 12 models generate signals independently
+          --> filter: cut off after 3:30 PM ET
+          --> resolve conflicts: 3-bar cooldown, priority-based (lower # wins)
           --> quality filter: OU needs Q >= 4, all others pass through
           --> engine: simulate trades with BE / trail / time-stop
 ```
@@ -275,7 +280,7 @@ All computed in `strategy/quant/features.py`:
 
 ## Exit Mechanics
 
-All 9 models use the same exit profile:
+All 12 models use the same exit profile:
 
 | Parameter | Value | What It Does |
 |:--|:--|:--|
@@ -293,7 +298,7 @@ All 9 models use the same exit profile:
 |:--|:--|:--|
 | Daily win cap | 2.0R | Stop taking signals once daily R reaches +2.0. Protects a good day. |
 | Max daily loss R | No limit | Allows intraday recovery. A -1R trade can be followed by a +3R winner. |
-| Dollar loss cap | $1,200 | Daily P&L truncated at -$1,200. Hard protection matching TopStepX rule. |
+| Dollar loss cap | $1,000 | Daily P&L truncated at -$1,000. Hard protection matching TopStepX rule. |
 | Consecutive cooldown | 10 | After 10 straight losses, skip next signal. Circuit breaker. |
 | Max concurrent | 1 | One trade at a time. No overlapping positions. |
 
@@ -306,18 +311,18 @@ Model-tiered dollar risk per trade:
 | Tier | Models | Risk/Trade | Rationale |
 |:--|:--|--:|:--|
 | High | ou_rev | $2,500 | Highest edge (47% WR, +0.576R), quality-filtered |
-| Medium | pd_rev | $1,200 | High WR (51%), strong at institutional levels |
-| Standard | All other models | $600 | Diversified coverage across market conditions |
+| Medium | pd_rev | $900 | High WR (51%), strong at institutional levels |
+| Standard | All other models | $400 | Diversified coverage across market conditions |
 
 **Contract formula:**
 
 ```
-contracts = min(50, floor(risk_dollars / (risk_ticks * $0.50)))
+contracts = min(20, floor(risk_dollars / (risk_ticks * $0.50)))
 ```
 
 Examples:
-- OU signal with 40 ticks risk: floor($2,500 / (40 x $0.50)) = 125, capped at **50 MNQ**
-- Kalman signal with 30 ticks risk: floor($600 / (30 x $0.50)) = **40 MNQ**
+- OU signal with 40 ticks risk: floor($2,500 / (40 x $0.50)) = 125, capped at **20 MNQ**
+- Kalman signal with 40 ticks risk: floor($400 / (40 x $0.50)) = **20 MNQ**
 
 ---
 
@@ -345,18 +350,18 @@ Once you pass the eval, the funded account has different rules:
 | Starting balance | $100,000 |
 | Trailing drawdown | $3,000 (trails upward with profit) |
 | Static floor | Locks at $0 P&L when peak profit reaches $3,000 |
-| Dollar loss cap | $1,200 per day |
-| Max payout | $2,000 per withdrawal |
-| Payout cap | 50% of current balance |
-| Green day minimum | $200 profit |
+| Dollar loss cap | $1,000 per day |
+| Max payout | $5,000 per withdrawal |
+| Payout cap | 30% of current balance |
+| Green day minimum | $150 profit |
 | Green days per payout | 5 |
 | Post-static scaling | 1.25x P&L when balance > $3K above start |
 
 ### How Payouts Work
 
 1. **Build to $3K peak** -- Trade until your peak profit hits $3,000. At this point, the drawdown floor locks at $0 (static phase).
-2. **Accumulate green days** -- Every day you make $200+ profit counts as a green day. You need 5 green days per payout.
-3. **Withdraw** -- After 5 green days, withdraw up to $2,000 (or 50% of your current balance, whichever is less).
+2. **Accumulate green days** -- Every day you make $150+ profit counts as a green day. You need 5 green days per payout.
+3. **Withdraw** -- After 5 green days, withdraw up to $5,000 (or 30% of your current balance, whichever is less).
 4. **Repeat** -- Keep trading and withdrawing. The floor stays locked at $0 so you cannot lose the account unless balance drops to $100,000.
 
 Monte Carlo result: 89% of 25,000 simulations extract $10K+ in 60 trading days.
@@ -404,11 +409,14 @@ nq-es-trader/
     quant/
       features.py                  OU, Hurst, Kalman, Parkinson, BB squeeze
     models/
-      __init__.py                  ALL_MODELS registry (9 models)
+      __init__.py                  ALL_MODELS registry (12 models)
       base.py                      BaseModel, Signal, ModelRiskProfile dataclasses
       ou_reversion.py              OU mean-reversion (priority 15, $2,500)
-      pd_level_reversion.py        Previous day level fade (priority 22, $1,200)
+      pd_level_reversion.py        Previous day level fade (priority 22, $900)
       vwap_reversion.py            VWAP z-score reversion (priority 25)
+      ou_lunch.py                  Lunch-session OU reversion (priority 16)
+      vwap_scalper.py              Faster VWAP band scalper (priority 25)
+      opening_drive.py             Opening drive momentum (priority 12)
       or_reversion.py              Opening range reversion (priority 28)
       ema_reversion.py             EMA mean-reversion (priority 30)
       sweep_reversal.py            Liquidity sweep reversal (priority 35)

@@ -1,4 +1,4 @@
-"""Live executor — 9-model strategy on TopStepX 100K funded account.
+"""Live executor — 12-model strategy on TopStepX 100K funded account.
 
 Sizing matches backtest exactly: model-tiered dollar risk from
 cfg.funded.model_risk_dollars, converted to contracts via
@@ -141,7 +141,7 @@ class LiveExecutor:
         log.info(f"Trailing DD: ${self.cfg.funded.trailing_dd:,.0f} | "
                  f"Static threshold: ${self.cfg.funded.static_threshold:,.0f}")
         self.reporter.start()
-        self.alerts.bot_started(self.start_balance, 9)
+        self.alerts.bot_started(self.start_balance, 12)
         log.info("Waiting for signals...\n")
 
         while True:

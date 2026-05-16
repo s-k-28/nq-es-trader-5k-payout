@@ -13,7 +13,7 @@ python3 --version
 
 ## Step 2: Download the bot
 
-1. Go to https://github.com/s-k-28/nq-es-trader-2
+1. Go to https://github.com/s-k-28/nq-es-trader-5k-payout
 2. Click the green **Code** button
 3. Click **Download ZIP**
 4. Extract the ZIP (double-click it in Finder)
@@ -21,7 +21,7 @@ python3 --version
 ## Step 3: Install dependencies
 
 1. Open **Terminal**
-2. Type `cd ` (with a space after), then drag the extracted `nq-es-trader-2` folder into the Terminal window and press Enter
+2. Type `cd ` (with a space after), then drag the extracted `nq-es-trader-5k-payout` folder into the Terminal window and press Enter
 3. Run:
 
 ```
@@ -32,7 +32,7 @@ Wait for it to finish.
 
 ## Step 4: Set up credentials
 
-1. In the `nq-es-trader-2` folder, run this in Terminal:
+1. In the `nq-es-trader-5k-payout` folder, run this in Terminal:
 
 ```
 cp .env.example .env
@@ -57,7 +57,7 @@ CONTRACTS=20
 
 ## Step 5: Make the launcher clickable
 
-Run this once in Terminal (from the nq-es-trader-2 folder):
+Run this once in Terminal (from the nq-es-trader-5k-payout folder):
 
 ```
 chmod +x start_bot.command
