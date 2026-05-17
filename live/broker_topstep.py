@@ -169,14 +169,19 @@ class TopStepBroker:
         if self.token and time.time() < self.token_expiry - 1800:
             return
         log.info("Refreshing token...")
-        resp = requests.post(
-            f"{self.base}/api/Auth/validate",
-            json={}, headers=self._headers(), timeout=10,
-        )
-        data = resp.json()
-        if data.get('newToken'):
-            self.token = data['newToken']
-        self.token_expiry = time.time() + 23 * 3600
+        try:
+            resp = requests.post(
+                f"{self.base}/api/Auth/validate",
+                json={}, headers=self._headers(), timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get('newToken'):
+                self.token = data['newToken']
+            self.token_expiry = time.time() + 23 * 3600
+        except Exception as e:
+            log.warning(f"Token refresh failed ({e}), performing full re-auth...")
+            self.connect()
 
     # ── Market Data ──────────────────────────────────────────────────
 
@@ -312,15 +317,20 @@ class TopStepBroker:
             'target': self._target_order_id,
         }
 
-    def modify_stop(self, new_price: float):
+    def modify_stop(self, new_price: float) -> bool:
         if not self._stop_order_id:
-            return
-        self._post('/api/Order/modify', {
-            'accountId': self.account_id,
-            'orderId': self._stop_order_id,
-            'stopPrice': self._round(new_price),
-        })
-        log.info(f"Stop modified → {new_price}")
+            return False
+        try:
+            self._post('/api/Order/modify', {
+                'accountId': self.account_id,
+                'orderId': self._stop_order_id,
+                'stopPrice': self._round(new_price),
+            })
+            log.info(f"Stop modified → {new_price}")
+            return True
+        except Exception as e:
+            log.error(f"STOP MODIFY FAILED (#{self._stop_order_id} → {new_price}): {e}")
+            return False
 
     def get_order_status(self, order_id: int) -> int | None:
         if not order_id:
@@ -332,9 +342,15 @@ class TopStepBroker:
             for o in data.get('orders', []):
                 if o.get('id') == order_id:
                     return o.get('status')
+            # Order not in open list: infer from position.
+            # If position exists, likely filled. If no position, return None
+            # (unknown) rather than assuming cancelled -- an orphan position
+            # from a previous trade must not cause a new order to look filled,
+            # and absence of position does not prove cancellation. The executor
+            # timeout handles the None/unknown case via re-polling.
             if self.position_size() > 0:
                 return ORD_FILLED
-            return ORD_CANCELLED
+            return None
         except Exception:
             return None
 
@@ -350,21 +366,53 @@ class TopStepBroker:
             log.warning(f"Cancel order {order_id} failed: {e}")
 
     def cancel_all_exit_orders(self):
-        self.cancel_order(self._stop_order_id)
-        self.cancel_order(self._target_order_id)
-        self._stop_order_id = None
-        self._target_order_id = None
+        stop_ok = self._try_cancel(self._stop_order_id)
+        target_ok = self._try_cancel(self._target_order_id)
+        if stop_ok:
+            self._stop_order_id = None
+        if target_ok:
+            self._target_order_id = None
 
-    def flatten(self):
-        self.cancel_all_exit_orders()
+    def _try_cancel(self, order_id: int) -> bool:
+        if not order_id:
+            return True
         try:
-            self._post('/api/Position/closeContract', {
+            self._post('/api/Order/cancel', {
                 'accountId': self.account_id,
-                'contractId': self.contract_id,
+                'orderId': order_id,
             })
-            log.info("Position flattened.")
+            return True
         except Exception as e:
-            log.warning(f"Flatten failed: {e}")
+            log.warning(f"Cancel order {order_id} failed: {e}")
+            return False
+
+    def flatten(self) -> bool:
+        """Close all positions. Retries up to 3 times with position verification."""
+        self.cancel_all_exit_orders()
+        for attempt in range(3):
+            try:
+                self._post('/api/Position/closeContract', {
+                    'accountId': self.account_id,
+                    'contractId': self.contract_id,
+                })
+            except Exception as e:
+                log.warning(f"Flatten attempt {attempt+1} failed: {e}")
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+                log.error("FLATTEN FAILED AFTER 3 ATTEMPTS — POSITION MAY BE OPEN")
+                return False
+            # Verify position is actually closed
+            time.sleep(1)
+            remaining = self.position_size()
+            if remaining == 0:
+                log.info("Position flattened and verified.")
+                return True
+            log.warning(f"Flatten sent but {remaining} contracts remain (attempt {attempt+1})")
+            if attempt < 2:
+                time.sleep(2)
+        log.error("FLATTEN VERIFICATION FAILED — POSITION MAY BE OPEN")
+        return False
 
     # ── Position ─────────────────────────────────────────────────────
 
@@ -392,6 +440,23 @@ class TopStepBroker:
             if a['id'] == self.account_id:
                 return a
         return {}
+
+    def get_exit_fill_price(self, entry_time: datetime = None) -> float | None:
+        """Get the last exit fill price from trade history."""
+        try:
+            params = {'accountId': self.account_id}
+            if entry_time:
+                params['startTimestamp'] = entry_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+            data = self._post('/api/Trade/search', params)
+            trade_list = data.get('trades', [])
+            for tr in reversed(trade_list):
+                if tr.get('contractId') == self.contract_id:
+                    p = tr.get('price')
+                    if p:
+                        return float(p)
+        except Exception:
+            pass
+        return None
 
     # ── Helpers ──────────────────────────────────────────────────────
 

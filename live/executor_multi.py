@@ -2,23 +2,26 @@
 
 Sizing matches backtest exactly: model-tiered dollar risk from
 cfg.funded.model_risk_dollars, converted to contracts via
-min(50, floor(risk_dollars / (risk_ticks * $0.50))).
+min(20, floor(risk_dollars / (risk_ticks * $0.50))).
 
 Risk controls (matching backtest engine_v2 + funded_sim):
 - Daily win cap: 2.0R total, stop taking signals
 - Dollar loss cap: $1,000/day, skip trades once breached
 - Consecutive loss cooldown: 10 losses, skip next signal
 - No daily R loss limit (allows intraday recovery)
-- BE at 0.6R, trail at 0.001, pp=0.0 (from model risk profiles)
+- BE at configured trigger, trail at trail_pct, partial profit locking
 
 Funded account rules (TopStepX 100K XFA):
 - $3,000 trailing drawdown, locks at $0 floor when peak >= $3K
 - $5,000 max payout, 30% of balance, 5 green days ($150+)
 """
 from __future__ import annotations
+import json
 import logging
+import os
 import time
 from datetime import datetime, time as dt_time
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass, field
 import pandas as pd
@@ -45,6 +48,7 @@ ENTRY_TIMEOUT_SEC = 60
 STATE_DIR = 'live/state'
 ADAPTIVE_STATE = f'{STATE_DIR}/adaptive.json'
 ADAPTIVE_JOURNAL = f'{STATE_DIR}/journal.json'
+DECISION_LOG = f'{STATE_DIR}/decisions.jsonl'
 
 
 @dataclass
@@ -63,12 +67,14 @@ class LiveTrade:
     partial_taken: bool = False
     trailing: bool = False
     mfe: float = 0.0
+    partial_r_locked: float = 0.0
 
 
 class LiveExecutor:
-    def __init__(self, cfg: Config, broker):
+    def __init__(self, cfg: Config, broker, shadow: bool = False):
         self.cfg = cfg
         self.broker = broker
+        self.shadow = shadow
         self.reporter = HubReporter()
         self.alerts = TelegramAlerts()
         self.guard = AdaptiveGuard()
@@ -93,7 +99,12 @@ class LiveExecutor:
         self.consec_cooldown = 10
         self.dollar_loss_cap = cfg.funded.dollar_loss_cap
 
+        Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
+
     def run(self):
+        if self.shadow:
+            log.info("*** SHADOW MODE — no orders will be placed ***")
+
         log.info("Fetching daily bars from API for regime detection...")
         self.daily_df = self.broker.get_daily_bars(days_back=90)
         if not self.daily_df.empty:
@@ -130,6 +141,24 @@ class LiveExecutor:
         self.peak_balance = self.start_balance
         log.info(f"Account balance: ${self.start_balance:,.0f}")
 
+        self._check_orphan_position()
+
+        # Reconstruct daily state on mid-session restart
+        now_ct = datetime.now(CT)
+        if now_ct.time() > dt_time(5, 0) and now_ct.time() < dt_time(16, 0):
+            log.info("Mid-session start detected — reconstructing daily state from broker")
+            try:
+                today_start = datetime(now_ct.year, now_ct.month, now_ct.day, 5, 0, tzinfo=CT)
+                trades_today = self.broker.get_exit_fill_price(entry_time=today_start)
+                # Use balance delta as proxy for daily P&L
+                if hasattr(self, '_day_open_balance') and self._day_open_balance:
+                    delta = self.start_balance - self._day_open_balance
+                    if delta < 0:
+                        self.daily_pnl_usd = delta
+                        log.warning(f"Reconstructed daily P&L from balance: ${delta:,.0f}")
+            except Exception:
+                log.warning("Could not reconstruct daily P&L from broker")
+
         self.guard.load_state(ADAPTIVE_STATE)
 
         risk_str = ' | '.join(f"{m}:${d:,}" for m, d in
@@ -152,6 +181,22 @@ class LiveExecutor:
             except Exception:
                 log.exception("Tick error")
             time.sleep(30)
+
+    def _check_orphan_position(self):
+        pos_size = self.broker.position_size()
+        if pos_size > 0:
+            log.warning(f"ORPHAN POSITION DETECTED: {pos_size} contracts open at startup")
+            if self.shadow:
+                log.info("Shadow mode — not flattening orphan position")
+                return
+            log.info("Flattening orphan position for safety")
+            if not self.broker.flatten():
+                log.error("CRITICAL: Orphan flatten FAILED — manual intervention required")
+            self._log_decision({
+                'action': 'flatten_orphan',
+                'reason': f'Found {pos_size} open contracts at startup',
+                'contracts': pos_size,
+            })
 
     def _tick(self):
         now = datetime.now(CT)
@@ -207,6 +252,7 @@ class LiveExecutor:
 
         acct = self.broker.get_account_info()
         bal = acct.get('balance', self.start_balance)
+        self._day_open_balance = bal
         if bal > self.peak_balance:
             self.peak_balance = bal
 
@@ -255,17 +301,32 @@ class LiveExecutor:
 
         if self.daily_r >= self.daily_win_cap:
             if not self._alerted_win_cap:
+                log.info(f"SKIP ALL -- Daily win cap reached: {self.daily_r:.2f}R >= {self.daily_win_cap}R")
+                self._log_decision({
+                    'action': 'skip_all', 'reason': 'daily_win_cap',
+                    'daily_r': self.daily_r, 'cap': self.daily_win_cap,
+                })
                 self.alerts.win_cap_hit(self.daily_r, self.daily_win_cap)
                 self._alerted_win_cap = True
             return
 
         if self.daily_pnl_usd <= -self.dollar_loss_cap:
             if not self._alerted_dlc:
+                log.info(f"SKIP ALL -- Dollar loss cap breached: ${self.daily_pnl_usd:,.0f} <= -${self.dollar_loss_cap:,.0f}")
+                self._log_decision({
+                    'action': 'skip_all', 'reason': 'dollar_loss_cap',
+                    'daily_pnl': self.daily_pnl_usd, 'cap': self.dollar_loss_cap,
+                })
                 self.alerts.dlc_warning(self.daily_pnl_usd, self.dollar_loss_cap)
                 self._alerted_dlc = True
             return
 
         if self.consec_losses >= self.consec_cooldown:
+            log.info(f"SKIP -- Consecutive loss cooldown: {self.consec_losses} >= {self.consec_cooldown}, resetting")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'consec_loss_cooldown',
+                'consec_losses': self.consec_losses, 'cooldown': self.consec_cooldown,
+            })
             self.consec_losses = 0
             return
 
@@ -273,6 +334,7 @@ class LiveExecutor:
             signals = self.gen.generate(self.buf, self.daily_df, None)
         except Exception:
             log.exception("Signal generation failed")
+            self._log_decision({'action': 'error', 'reason': 'signal_generation_exception'})
             return
 
         if not signals:
@@ -286,11 +348,26 @@ class LiveExecutor:
         now = datetime.now(CT)
         sig_age = (now - sig.ts.to_pydatetime().replace(tzinfo=CT)).total_seconds()
         if sig_age > 120:
+            log.info(f"SKIP -- Stale signal: [{sig.model}] {sig.direction} age={sig_age:.0f}s > 120s")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'stale_signal',
+                'model': sig.model, 'direction': sig.direction,
+                'signal_age_sec': round(sig_age, 1), 'max_age_sec': 120,
+                'signal_ts': str(sig.ts),
+            })
             return
 
         model_key = (self.cur_date, sig.model)
         rp = sig.risk_profile
         if rp and self.daily_model_count.get(model_key, 0) >= rp.max_daily:
+            log.info(f"SKIP -- Model daily limit: [{sig.model}] "
+                     f"{self.daily_model_count.get(model_key, 0)}/{rp.max_daily}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'model_daily_limit',
+                'model': sig.model, 'direction': sig.direction,
+                'count': self.daily_model_count.get(model_key, 0),
+                'max_daily': rp.max_daily,
+            })
             return
 
         self.last_signal_key = sig_key
@@ -299,11 +376,21 @@ class LiveExecutor:
     def _enter_trade(self, sig: Signal):
         risk = abs(sig.entry - sig.stop)
         if risk <= 0:
+            log.info(f"SKIP -- Zero risk: [{sig.model}] entry={sig.entry} stop={sig.stop}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'zero_risk',
+                'model': sig.model, 'entry': sig.entry, 'stop': sig.stop,
+            })
             return
 
         if sig.risk_ticks < self.cfg.risk.min_risk_ticks:
             log.info(f"    SKIP -- stop too tight: {sig.risk_ticks:.0f} ticks "
                      f"(min {self.cfg.risk.min_risk_ticks})")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'stop_too_tight',
+                'model': sig.model, 'risk_ticks': sig.risk_ticks,
+                'min_risk_ticks': self.cfg.risk.min_risk_ticks,
+            })
             return
 
         risk_per_contract = sig.risk_ticks * MNQ_TICK_VALUE
@@ -313,6 +400,12 @@ class LiveExecutor:
         model_risk = self.cfg.funded.model_risk_dollars.get(sig.model, 400)
         qty = min(MAX_CONTRACTS, int(model_risk / risk_per_contract))
         if qty <= 0:
+            log.info(f"    SKIP -- qty=0: risk_per_contract=${risk_per_contract:.2f} > model_risk=${model_risk}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'zero_qty',
+                'model': sig.model, 'risk_per_contract': risk_per_contract,
+                'model_risk': model_risk,
+            })
             return
 
         now_ct = datetime.now(CT)
@@ -322,6 +415,10 @@ class LiveExecutor:
             sig.model, now_ct.hour, atr, avg_atr)
         if scale == 0.0:
             log.info(f"    SKIP -- AdaptiveGuard blocked: {guards}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'adaptive_guard_blocked',
+                'model': sig.model, 'guards': guards, 'scale': 0.0,
+            })
             return
         if scale < 1.0:
             scaled_qty = max(1, int(qty * scale))
@@ -335,6 +432,11 @@ class LiveExecutor:
             if max_qty <= 0:
                 log.info(f"    SKIP -- DLC exhausted: P&L ${self.daily_pnl_usd:,.0f}, "
                          f"remaining ${dlc_remaining:,.0f}")
+                self._log_decision({
+                    'action': 'skip_signal', 'reason': 'dlc_exhausted',
+                    'model': sig.model, 'daily_pnl': self.daily_pnl_usd,
+                    'dlc_remaining': dlc_remaining,
+                })
                 return
             log.info(f"    DLC scale: {qty} -> {max_qty} MNQ "
                      f"(remaining ${dlc_remaining:,.0f})")
@@ -358,14 +460,57 @@ class LiveExecutor:
             log.warning(f"    STOP WIDENED: {actual_risk_ticks:.0f} -> {MIN_RISK_TICKS} ticks "
                         f"({sig.stop:.2f} -> {stop_price:.2f})")
 
+        self._log_decision({
+            'action': 'entry_attempt',
+            'model': sig.model, 'direction': sig.direction,
+            'entry': sig.entry, 'stop': stop_price, 'target': sig.target,
+            'risk_ticks': sig.risk_ticks, 'rr': round(sig.rr, 2),
+            'contracts': qty, 'model_risk_tier': model_risk,
+            'potential_loss': round(potential_loss, 2),
+            'guard_scale': round(scale, 2), 'guards': guards,
+            'signal_ts': str(sig.ts),
+            'shadow': self.shadow,
+        })
+
+        if self.shadow:
+            log.info(f"    SHADOW -- would place {qty} MNQ limit @ {sig.entry:.2f}")
+            self.trade = LiveTrade(
+                signal=sig,
+                direction=sig.direction,
+                entry_price=sig.entry,
+                stop_price=stop_price,
+                target_price=sig.target,
+                risk=risk,
+                entry_time=datetime.now(CT),
+                contracts=qty,
+                order_ids={},
+                pending=False,
+            )
+            model_key = (self.cur_date, sig.model)
+            self.daily_model_count[model_key] = \
+                self.daily_model_count.get(model_key, 0) + 1
+            return
+
         try:
             entry_id = self.broker.place_limit_entry(
                 direction=sig.direction,
                 qty=qty,
                 entry_price=sig.entry,
             )
-        except Exception:
+        except Exception as e:
             log.exception("Order placement failed")
+            self._log_decision({
+                'action': 'entry_failed', 'reason': 'order_placement_exception',
+                'model': sig.model, 'error': str(e),
+            })
+            return
+
+        if not entry_id:
+            log.error("Order placement returned no order ID")
+            self._log_decision({
+                'action': 'entry_failed', 'reason': 'no_order_id_returned',
+                'model': sig.model,
+            })
             return
 
         self.trade = LiveTrade(
@@ -396,17 +541,37 @@ class LiveExecutor:
             self._check_entry_fill()
             return
 
-        pos = self.broker.position_size()
-        if pos == 0:
-            self._on_trade_closed()
-            return
+        if not self.shadow:
+            pos = self.broker.position_size()
+            if pos == 0:
+                self._on_trade_closed()
+                return
 
         bar = self.buf.iloc[-1]
         is_long = t.direction == 'long'
+
+        # Shadow mode: detect stop/target hits from price action
+        if self.shadow:
+            if is_long:
+                if bar['low'] <= t.stop_price:
+                    self._close_trade('stop')
+                    return
+                if bar['high'] >= t.target_price:
+                    self._close_trade('target')
+                    return
+            else:
+                if bar['high'] >= t.stop_price:
+                    self._close_trade('stop')
+                    return
+                if bar['low'] <= t.target_price:
+                    self._close_trade('target')
+                    return
+
         rp = t.signal.risk_profile
 
         be_trigger = rp.be_trigger_rr if rp else self.cfg.risk.be_trigger_rr
         partial_rr = rp.partial_rr if rp else self.cfg.risk.partial_rr
+        partial_pct = rp.partial_pct if rp else self.cfg.risk.partial_pct
         trail_pct = rp.trail_pct if rp else 0.0
         time_stop_min = rp.time_stop_minutes if rp else self.cfg.strategy.time_stop_minutes
 
@@ -422,25 +587,41 @@ class LiveExecutor:
                 if is_long:
                     new_stop = t.entry_price + t.mfe - trail_dist
                     if new_stop > t.stop_price:
+                        prev_stop = t.stop_price
                         t.stop_price = round(new_stop / TICK_SIZE) * TICK_SIZE
-                        self.broker.modify_stop(t.stop_price)
+                        if not self.shadow:
+                            if not self.broker.modify_stop(t.stop_price):
+                                log.warning(f"    Trail stop advance FAILED, reverting stop {t.stop_price} → {prev_stop}")
+                                t.stop_price = prev_stop
                 else:
                     new_stop = t.entry_price - t.mfe + trail_dist
                     if new_stop < t.stop_price:
+                        prev_stop = t.stop_price
                         t.stop_price = round(new_stop / TICK_SIZE) * TICK_SIZE
-                        self.broker.modify_stop(t.stop_price)
+                        if not self.shadow:
+                            if not self.broker.modify_stop(t.stop_price):
+                                log.warning(f"    Trail stop advance FAILED, reverting stop {t.stop_price} → {prev_stop}")
+                                t.stop_price = prev_stop
 
         if not t.partial_taken and t.risk > 0 and best >= t.risk * partial_rr:
             t.partial_taken = True
+            t.partial_r_locked = partial_pct * partial_rr
             if trail_pct > 0:
                 t.trailing = True
-            log.info(f"    Trail activated (MFE >= {partial_rr}R)")
+            log.info(f"    Partial triggered (MFE >= {partial_rr}R): "
+                     f"locked {t.partial_r_locked:.2f}R ({partial_pct*100:.0f}%)")
 
         if not t.moved_be and t.risk > 0 and best >= t.risk * be_trigger:
+            prev_stop = t.stop_price
             t.moved_be = True
             t.stop_price = t.entry_price
-            self.broker.modify_stop(t.entry_price)
-            log.info(f"    Moved stop to BREAKEVEN @ {t.entry_price:.2f}")
+            if not self.shadow:
+                if not self.broker.modify_stop(t.entry_price):
+                    log.warning(f"    BE stop modify FAILED, will retry next tick")
+                    t.moved_be = False
+                    t.stop_price = prev_stop
+            if t.moved_be:
+                log.info(f"    Moved stop to BREAKEVEN @ {t.entry_price:.2f}")
 
         elapsed = (datetime.now(CT) - t.entry_time).total_seconds() / 60
         if elapsed >= time_stop_min and not t.moved_be:
@@ -460,7 +641,12 @@ class LiveExecutor:
         if status in (ORD_CANCELLED, ORD_REJECTED, ORD_EXPIRED):
             status_name = {ORD_CANCELLED: 'CANCELLED', ORD_REJECTED: 'REJECTED',
                            ORD_EXPIRED: 'EXPIRED'}
-            log.info(f"    ENTRY {status_name.get(status, 'REMOVED')} -- resetting")
+            reason = status_name.get(status, 'REMOVED')
+            log.info(f"    ENTRY {reason} -- resetting")
+            self._log_decision({
+                'action': 'entry_rejected', 'reason': reason.lower(),
+                'model': t.signal.model, 'order_id': entry_id,
+            })
             self._reset_trade()
             return
 
@@ -481,22 +667,46 @@ class LiveExecutor:
                     target_price=t.target_price,
                 )
                 t.order_ids.update(exit_ids)
-            except Exception:
+                if not exit_ids.get('stop') or not exit_ids.get('target'):
+                    log.error("Bracket placement returned incomplete IDs — flattening")
+                    self._log_decision({
+                        'action': 'bracket_incomplete', 'reason': 'missing_order_ids',
+                        'model': t.signal.model, 'exit_ids': exit_ids,
+                    })
+                    self.broker.flatten()
+                    self._reset_trade()
+                    return
+            except Exception as e:
                 log.exception("Exit bracket placement failed -- flattening")
+                self._log_decision({
+                    'action': 'bracket_failed', 'reason': 'exception',
+                    'model': t.signal.model, 'error': str(e),
+                })
                 self.broker.flatten()
                 self._reset_trade()
+                return
+
+            self._log_decision({
+                'action': 'entry_filled',
+                'model': t.signal.model, 'direction': t.direction,
+                'entry_price': t.entry_price, 'stop': t.stop_price,
+                'target': t.target_price, 'contracts': t.contracts,
+                'bracket_stop_id': exit_ids.get('stop'),
+                'bracket_target_id': exit_ids.get('target'),
+            })
             return
 
         elapsed = (datetime.now(CT) - t.entry_time).total_seconds()
         if elapsed >= ENTRY_TIMEOUT_SEC:
             log.info(f"    ENTRY TIMEOUT -- {elapsed:.0f}s, cancelling")
+            self._log_decision({
+                'action': 'entry_timeout', 'model': t.signal.model,
+                'elapsed_sec': round(elapsed, 1),
+            })
             self.broker.cancel_order(entry_id)
             self._reset_trade()
 
     def _reset_trade(self):
-        self.broker._stop_order_id = None
-        self.broker._target_order_id = None
-        self.broker._entry_order_id = None
         self.trade = None
 
     def _on_trade_closed(self):
@@ -506,30 +716,32 @@ class LiveExecutor:
 
         self.broker.cancel_all_exit_orders()
 
-        try:
-            trades = self.broker._post('/api/Trade/search', {
-                'accountId': self.broker.account_id,
-                'startTimestamp': t.entry_time.strftime('%Y-%m-%dT%H:%M:%SZ'),
-            })
-            trade_list = trades.get('trades', [])
-            pnl = sum((tr.get('profitAndLoss') or 0) for tr in trade_list
-                      if tr.get('contractId') == self.broker.contract_id)
-        except Exception:
-            pnl = 0
+        # Get exit price from broker fill history, fall back to last bar
+        exit_price = self.broker.get_exit_fill_price(entry_time=t.entry_time)
+        if exit_price is None and not self.buf.empty:
+            exit_price = self.buf.iloc[-1]['close']
 
-        if pnl == 0:
-            exit_price = None
-            if hasattr(self.broker, 'get_exit_fill_price'):
-                exit_price = self.broker.get_exit_fill_price()
-            if exit_price is None and not self.buf.empty:
-                exit_price = self.buf.iloc[-1]['close']
-            if exit_price is not None:
-                is_long = t.direction == 'long'
-                raw = (exit_price - t.entry_price) if is_long else (t.entry_price - exit_price)
-                pnl = raw * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
+        # Compute raw_r from price delta / risk -- matches backtest exactly
+        # This is one-unit R regardless of contracts or dollar amounts
+        if exit_price is not None and t.risk > 0:
+            is_long = t.direction == 'long'
+            raw_r = ((exit_price - t.entry_price) / t.risk if is_long
+                     else (t.entry_price - exit_price) / t.risk)
+        else:
+            raw_r = 0
 
-        risk_usd = t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
-        total_r = pnl / risk_usd if risk_usd > 0 else 0
+        # Apply partial formula: partial_r_locked covers the partial leg,
+        # remainder uses (1 - partial_pct) * raw_r for the rest
+        if t.partial_taken and t.partial_r_locked > 0:
+            rp = t.signal.risk_profile
+            partial_pct = rp.partial_pct if rp else self.cfg.risk.partial_pct
+            remainder_r = (1 - partial_pct) * raw_r
+            total_r = t.partial_r_locked + remainder_r
+        else:
+            total_r = raw_r
+
+        # Derive dollar P&L from total_r (matches _close_trade path)
+        pnl = total_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
 
         self.daily_r += total_r
         self.daily_pnl_usd += pnl
@@ -548,7 +760,7 @@ class LiveExecutor:
             t.signal.model, t.direction, total_r, pnl, reason,
             self.daily_r, self.daily_pnl_usd)
 
-        self.reporter.report_trade({
+        trade_record = {
             'model': t.signal.model, 'direction': t.direction,
             'entry': t.entry_price, 'stop': t.stop_price, 'target': t.target_price,
             'risk_ticks': t.signal.risk_ticks, 'contracts': t.contracts,
@@ -556,6 +768,14 @@ class LiveExecutor:
             'reason': reason, 'entry_time': t.entry_time.isoformat(),
             'exit_time': datetime.now(CT).isoformat(),
             'daily_r': round(self.daily_r, 3), 'daily_pnl': round(self.daily_pnl_usd, 2),
+            'partial_taken': t.partial_taken,
+            'partial_r_locked': round(t.partial_r_locked, 3),
+            'mfe': round(t.mfe, 2),
+        }
+        self.reporter.report_trade(trade_record)
+
+        self._log_decision({
+            'action': 'trade_closed', **trade_record,
         })
 
         now_ct = datetime.now(CT)
@@ -575,10 +795,20 @@ class LiveExecutor:
 
         if t.pending:
             self.broker.cancel_order(t.order_ids.get('entry'))
+            self._log_decision({
+                'action': 'pending_cancelled', 'reason': reason,
+                'model': t.signal.model,
+            })
             self._reset_trade()
             return
 
-        self.broker.flatten()
+        if not self.shadow:
+            if not self.broker.flatten():
+                log.error("CRITICAL: Flatten failed in _close_trade — attempting emergency market order")
+                self._log_decision({
+                    'action': 'flatten_failed', 'reason': reason,
+                    'model': t.signal.model,
+                })
 
         bar = self.buf.iloc[-1] if not self.buf.empty else None
         if bar is not None:
@@ -587,7 +817,17 @@ class LiveExecutor:
                 raw_pnl = (bar['close'] - t.entry_price)
             else:
                 raw_pnl = (t.entry_price - bar['close'])
-            total_r = raw_pnl / t.risk if t.risk > 0 else 0
+            slip = TICK_SIZE * 0.25
+            raw_pnl -= slip  # pessimize exit by 0.25 ticks (matches backtest)
+            raw_r = raw_pnl / t.risk if t.risk > 0 else 0
+
+            if t.partial_taken and t.partial_r_locked > 0:
+                rp = t.signal.risk_profile
+                partial_pct = rp.partial_pct if rp else self.cfg.risk.partial_pct
+                remainder_r = (1 - partial_pct) * raw_r
+                total_r = t.partial_r_locked + remainder_r
+            else:
+                total_r = raw_r
         else:
             total_r = 0
 
@@ -607,7 +847,7 @@ class LiveExecutor:
             t.signal.model, t.direction, total_r, pnl_usd, reason,
             self.daily_r, self.daily_pnl_usd)
 
-        self.reporter.report_trade({
+        trade_record = {
             'model': t.signal.model, 'direction': t.direction,
             'entry': t.entry_price, 'stop': t.stop_price, 'target': t.target_price,
             'risk_ticks': t.signal.risk_ticks, 'contracts': t.contracts,
@@ -615,7 +855,13 @@ class LiveExecutor:
             'reason': reason, 'entry_time': t.entry_time.isoformat(),
             'exit_time': datetime.now(CT).isoformat(),
             'daily_r': round(self.daily_r, 3), 'daily_pnl': round(self.daily_pnl_usd, 2),
-        })
+            'partial_taken': t.partial_taken,
+            'partial_r_locked': round(t.partial_r_locked, 3),
+            'mfe': round(t.mfe, 2),
+        }
+        self.reporter.report_trade(trade_record)
+
+        self._log_decision({'action': 'trade_closed', **trade_record})
 
         now_ct = datetime.now(CT)
         self.guard.record_trade(
@@ -632,11 +878,20 @@ class LiveExecutor:
                 self.broker.cancel_order(self.trade.order_ids.get('entry'))
             else:
                 log.info("Shutdown -- flattening open position")
-                self.broker.flatten()
+                if not self.broker.flatten():
+                    log.error("CRITICAL: Shutdown flatten FAILED")
             self._reset_trade()
+
+        pos = self.broker.position_size()
+        if pos > 0:
+            log.warning(f"Shutdown -- still have {pos} contracts, force flatten")
+            if not self.broker.flatten():
+                log.error("CRITICAL: Shutdown force flatten FAILED")
+
         self.guard.save_state(ADAPTIVE_STATE)
         self.guard.save_journal(ADAPTIVE_JOURNAL)
         self.alerts.bot_stopped("shutdown")
+        self._log_decision({'action': 'shutdown', 'reason': 'user_requested'})
         log.info("Executor shutdown complete.")
 
     def _current_atr(self) -> float:
@@ -652,3 +907,16 @@ class LiveExecutor:
         window = self.buf.tail(200)
         tr = (window['high'] - window['low']).mean()
         return float(tr)
+
+    def _log_decision(self, record: dict):
+        record['timestamp'] = datetime.now(CT).isoformat()
+        record.setdefault('daily_r', round(self.daily_r, 3))
+        record.setdefault('daily_pnl_usd', round(self.daily_pnl_usd, 2))
+        line = json.dumps(record) + '\n'
+        try:
+            with open(DECISION_LOG, 'a') as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            log.warning("Failed to write decision log")

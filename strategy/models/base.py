@@ -8,7 +8,7 @@ from config import Config
 @dataclass
 class ModelRiskProfile:
     min_risk_ticks: int = 100
-    max_risk_ticks: int = 200
+    max_risk_ticks: int = 80
     min_rr: float = 2.0
     be_trigger_rr: float = 1.5
     partial_rr: float = 1.5
@@ -36,6 +36,7 @@ class Signal:
 
 
 GLOBAL_MIN_RISK_TICKS = 40  # 10 points — hard floor, no model can go below
+GLOBAL_MAX_RISK_TICKS = 80  # 20 points — hard ceiling, no model can go above
 
 
 class BaseModel(ABC):
@@ -56,7 +57,8 @@ class BaseModel(ABC):
         rp = self.risk_profile
         ticks = risk / self.tick
         floor = max(rp.min_risk_ticks, GLOBAL_MIN_RISK_TICKS)
-        if not (floor <= ticks <= rp.max_risk_ticks):
+        ceiling = min(rp.max_risk_ticks, GLOBAL_MAX_RISK_TICKS)
+        if not (floor <= ticks <= ceiling):
             return False
         if risk <= 0:
             return False

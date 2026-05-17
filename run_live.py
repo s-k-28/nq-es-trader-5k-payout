@@ -28,6 +28,8 @@ def main():
     p = argparse.ArgumentParser(description='NQ Trading Bot -- TopStepX 100K')
     p.add_argument('--env', default=os.getenv('TOPSTEP_ENV', 'demo'),
                    choices=['demo', 'live'])
+    p.add_argument('--shadow', action='store_true',
+                   help='Run in shadow mode (no orders placed, full decision logging)')
     args = p.parse_args()
 
     username = os.getenv('TOPSTEP_USER')
@@ -55,7 +57,7 @@ def main():
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
 |  Max MNQ:    20 contracts | Min stop: 25 pts               |
 |  Exits:      BE 0.6R | Trail 0.001 | No partials           |
-|  Daily:      Win cap 2.0R | DLC $1,000 | CC 10             |
+|  Daily:      Win cap 2.0R | DLC $800 | CC 10               |
 |  Account:    $3K trailing DD, static at $3K peak            |
 |  Payouts:    $5K max, 30% bal, 5 green days ($150+)         |
 +------------------------------------------------------------+
@@ -78,7 +80,7 @@ def main():
         print("Check your .env credentials and try again.")
         return
 
-    executor = LiveExecutor(cfg, broker)
+    executor = LiveExecutor(cfg, broker, shadow=args.shadow)
 
     try:
         executor.run()

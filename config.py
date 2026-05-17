@@ -73,7 +73,7 @@ class FundedAccountParams:
     max_payout: float = 5000.0
     payout_balance_pct: float = 0.30
     green_days_per_payout: int = 5
-    dollar_loss_cap: float = 1000.0
+    dollar_loss_cap: float = 800.0
     post_static_scaling: list = field(default_factory=lambda: [
         (3000, 1.0), (0, 1.0),
     ])
@@ -82,6 +82,7 @@ class FundedAccountParams:
         'vwap_rev': 400, 'or_rev': 400, 'ou_lunch': 400,
         'vwap_scalp': 400, 'open_drive': 400,
         'trend': 400, 'pm_mom': 400,
+        'ema_rev': 400, 'kalman_mom': 400, 'sweep': 400,
     })
 
 

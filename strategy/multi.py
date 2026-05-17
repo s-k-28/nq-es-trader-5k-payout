@@ -75,10 +75,15 @@ class MultiModelGenerator:
                     result.append(sig)
                     continue
 
+                rp = sig.risk_profile
+                max_ticks = rp.max_risk_ticks if rp else 200
+                if new_risk_ticks > max_ticks:
+                    result.append(sig)
+                    continue
+
                 new_reward = abs(sig.target - sig.entry)
                 new_rr = new_reward / new_risk if new_risk > 0 else 0
 
-                rp = sig.risk_profile
                 if rp and new_rr < rp.min_rr:
                     continue
 
