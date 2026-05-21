@@ -215,16 +215,17 @@ class IBBroker:
             'target': self._target_order_id,
         }
 
-    def modify_stop(self, new_price: float):
+    def modify_stop(self, new_price: float) -> bool:
         if not self._stop_order_id:
-            return
+            return False
         for trade in self.ib.openTrades():
             if trade.order.orderId == self._stop_order_id:
                 trade.order.auxPrice = self._round(new_price)
                 self.ib.placeOrder(self.contract, trade.order)
                 log.info(f"Stop modified → {new_price:.2f}")
-                return
+                return True
         log.warning(f"Stop order {self._stop_order_id} not found in open trades")
+        return False
 
     def get_order_status(self, order_id: int) -> int | None:
         if not order_id:
@@ -263,7 +264,7 @@ class IBBroker:
         self._stop_order_id = None
         self._target_order_id = None
 
-    def flatten(self):
+    def flatten(self) -> bool:
         self.cancel_all_exit_orders()
         pos_size = self.position_size()
         if pos_size != 0:
@@ -271,9 +272,14 @@ class IBBroker:
             order = MarketOrder(action, abs(pos_size))
             self.ib.placeOrder(self.contract, order)
             self.ib.sleep(2)
+            remaining = self.position_size()
+            if remaining != 0:
+                log.error(f"Flatten incomplete — {remaining} contracts still open")
+                return False
             log.info("Position flattened.")
         else:
             log.info("No position to flatten.")
+        return True
 
     def get_position(self) -> dict | None:
         self.ib.sleep(0.1)
@@ -311,12 +317,15 @@ class IBBroker:
         summary['name'] = f'IB-{self.account_id}'
         return summary
 
-    def get_exit_fill_price(self) -> float | None:
-        """Return the fill price of the most recent execution on this contract."""
+    def get_exit_fill_price(self, entry_time: datetime = None) -> float | None:
+        """Return the fill price of the most recent exit on this contract."""
         try:
             fills = self.ib.fills()
             contract_fills = [f for f in fills
                               if f.contract.conId == self.contract_id]
+            if entry_time is not None:
+                contract_fills = [f for f in contract_fills
+                                  if f.time >= entry_time]
             if not contract_fills:
                 return None
             contract_fills.sort(key=lambda f: f.time, reverse=True)

@@ -283,6 +283,87 @@ The bot will:
 
 ---
 
+## Running with Interactive Brokers
+
+You can run the same 12-model strategy through Interactive Brokers instead of TopStepX. This works with both IB Gateway and TWS.
+
+### Step 1. Install IB Gateway
+
+1. Download [IB Gateway](https://www.interactivebrokers.com/en/trading/ibgateway-stable.php) (stable version)
+2. Install and launch it
+3. Select **IB API** and **Paper Trading** on the login screen
+4. Log in with your IBKR credentials
+
+### Step 2. Configure API Settings
+
+In IB Gateway, go to **Configure > Settings > API > Settings**:
+
+- **Enable ActiveX and Socket Clients**: checked
+- **Socket port**: `4002` (paper) or `4001` (live)
+- **Read-Only API**: **unchecked** (the bot needs to place orders)
+- **Allow connections from localhost only**: checked (recommended)
+
+### Step 3. Install the IB Python Library
+
+```bash
+pip3 install ib_insync
+```
+
+### Step 4. Run in Paper Mode
+
+```bash
+# Mac/Linux
+python3 run_ib.py
+
+# Windows
+python run_ib.py
+```
+
+You should see:
+```
++============================================================+
+|          NQ TRADING BOT — INTERACTIVE BROKERS               |
++============================================================+
+|  Models:     12 (OU, PD, VWAP, EMA, Kalman, Sweep,         |
+|              OR, OU-Lunch, VWAP-Scalp, Open-Drive,          |
+|              Trend, PM Mom)                                  |
+|  Broker:     IB Gateway @ 127.0.0.1:4002                    |
+|  Mode:       PAPER                                          |
++============================================================+
+```
+
+### Step 5. Go Live
+
+Once paper mode works:
+
+```bash
+# Mac/Linux
+python3 run_ib.py --port 4001
+
+# Windows
+python run_ib.py --port 4001
+```
+
+### Options
+
+| Flag | Default | Description |
+|:--|:--|:--|
+| `--host` | `127.0.0.1` | IB Gateway/TWS host address |
+| `--port` | `4002` | `4002` = paper, `4001` = live |
+| `--client-id` | `1` | API client ID (change if running multiple bots) |
+| `--shadow` | off | Generate signals without placing orders (observation mode) |
+
+### Troubleshooting
+
+| Problem | Solution |
+|:--|:--|
+| `Connection failed` | Make sure IB Gateway is running and API is enabled (port 4002, Read-Only unchecked) |
+| `Could not qualify MNQ contract` | IB Gateway may not have market data permissions for MNQ. Check **Account Management > Market Data Subscriptions** |
+| `No IB accounts found` | IB Gateway isn't fully logged in yet. Wait for the green "Connected" status |
+| `ModuleNotFoundError: ib_insync` | Run `pip3 install ib_insync` |
+
+---
+
 ## Strategy
 
 ### 12-Model Architecture
@@ -463,6 +544,7 @@ python run_multi.py --nq data/mnq_2026_1min.csv --history data/Dataset_NQ_1min_2
 nq-es-trader/
   config.py                        All parameters: strategy, risk, funded account rules
   run_live.py                      Live bot entry point (TopStepX 100K)
+  run_ib.py                        Live bot entry point (Interactive Brokers)
   run_multi.py                     Backtest runner with per-model reporting
 
   strategy/
@@ -499,6 +581,7 @@ nq-es-trader/
 
   live/
     broker_topstep.py              TopStepX REST API: auth, orders, positions, bars
+    broker_ib.py                   Interactive Brokers adapter (IB Gateway/TWS)
     executor_multi.py              Live executor: model-tiered sizing, same config as backtest
 
   frontend/

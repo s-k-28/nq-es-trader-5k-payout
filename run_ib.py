@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-NQ 9-Model Trading Bot — Interactive Brokers Paper/Live
-Connects to IB Gateway/TWS, runs all 9 models with model-tiered risk.
+NQ 12-Model Trading Bot — Interactive Brokers Paper/Live
+Connects to IB Gateway/TWS, runs all 12 models with model-tiered risk.
 
 Usage:
   python3 run_ib.py                    # paper trading (port 4002)
@@ -22,13 +22,15 @@ logging.basicConfig(
 
 
 def main():
-    p = argparse.ArgumentParser(description='NQ Trading Bot — Interactive Brokers')
+    p = argparse.ArgumentParser(description='NQ 12-Model Trading Bot — Interactive Brokers')
     p.add_argument('--host', default='127.0.0.1',
                    help='IB Gateway/TWS host (default: 127.0.0.1)')
     p.add_argument('--port', type=int, default=4002,
                    help='IB Gateway port (4002=paper, 4001=live)')
     p.add_argument('--client-id', type=int, default=1,
                    help='API client ID (default: 1)')
+    p.add_argument('--shadow', action='store_true',
+                   help='Shadow mode: generate signals but do not trade')
     args = p.parse_args()
 
     cfg = Config()
@@ -41,8 +43,9 @@ def main():
 +============================================================+
 |          NQ TRADING BOT — INTERACTIVE BROKERS               |
 +============================================================+
-|  Models:     9 (OU, PD, VWAP, OR, OU-Lunch, VWAP-Scalp,    |
-|              Open-Drive, Trend, PM Mom)                      |
+|  Models:     12 (OU, PD, VWAP, EMA, Kalman, Sweep,         |
+|              OR, OU-Lunch, VWAP-Scalp, Open-Drive,          |
+|              Trend, PM Mom)                                  |
 |  Broker:     IB Gateway @ {args.host}:{args.port:<25}|
 |  Mode:       {mode:<47}|
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
@@ -71,7 +74,7 @@ def main():
         print("  4. Check API settings: port 4002, Read-Only unchecked")
         return
 
-    executor = LiveExecutor(cfg, broker)
+    executor = LiveExecutor(cfg, broker, shadow=args.shadow)
 
     try:
         executor.run()
