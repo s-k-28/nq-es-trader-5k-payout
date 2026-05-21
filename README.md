@@ -74,11 +74,15 @@ Each year tested out-of-sample using only data from that year:
 
 ---
 
-## Quick Start
+## Setup
 
-### Step 1. Install Python
+### Prerequisites
 
-You need Python 3.10 or higher.
+- Python 3.10 or higher
+- Git
+- A terminal (Terminal on Mac, Command Prompt or PowerShell on Windows)
+
+### 1. Install Python
 
 **Mac:**
 ```bash
@@ -88,36 +92,91 @@ brew install python
 **Windows:**
 Download from [python.org/downloads](https://www.python.org/downloads/). During installation, check **"Add Python to PATH"**.
 
-Verify your installation:
+Verify it works:
 ```bash
-python3 --version
+python3 --version   # Mac/Linux
+python --version    # Windows
 ```
 
-### Step 2. Clone and Install
+### 2. Clone the Repo
 
 ```bash
 git clone https://github.com/s-k-28/nq-es-trader-5k-payout.git
 cd nq-es-trader-5k-payout
+```
+
+### 3. Install Dependencies
+
+```bash
+# Mac/Linux
+pip3 install -r requirements.txt
+
+# Windows
 pip install -r requirements.txt
 ```
 
 This installs: `pandas`, `numpy`, `matplotlib`, `tabulate`, `requests`, `python-dotenv`.
 
-### Step 3. Run Backtest
-
+If `pip3` gives a permission error, try:
 ```bash
-python generate_charts.py
+pip3 install --user -r requirements.txt
 ```
 
-This runs the full 12-model backtest on 2022-2026 data and produces:
-- 6 chart PNG files in the project root
-- Eval pass Monte Carlo simulation (25,000 runs)
-- Funded account Monte Carlo simulation (25,000 runs)
-- Complete summary with per-model breakdown printed to terminal
-
-### Step 4. Launch Dashboard
+### 4. Verify Installation
 
 ```bash
+# Mac/Linux
+python3 -c "from config import Config; print('Setup OK')"
+
+# Windows
+python -c "from config import Config; print('Setup OK')"
+```
+
+If you see `Setup OK`, you're ready.
+
+---
+
+## Running the Backtest
+
+This runs the full 12-model backtest on 2022-2026 data. No broker account needed.
+
+```bash
+# Mac/Linux
+python3 scripts/generate_charts.py
+
+# Windows
+python scripts/generate_charts.py
+```
+
+This takes 1-2 minutes and produces:
+- 6 chart PNGs saved to `output/charts/`
+- 25,000-run eval pass Monte Carlo simulation
+- 25,000-run funded account Monte Carlo simulation
+- Full summary with per-model breakdown printed to your terminal
+
+You can also run a quick backtest without charts:
+```bash
+# Mac/Linux
+python3 run_multi.py --nq data/Dataset_NQ_1min_2022_2025.csv
+
+# Windows
+python run_multi.py --nq data/Dataset_NQ_1min_2022_2025.csv
+```
+
+To backtest on 2026 data (with historical warmup):
+```bash
+python3 run_multi.py --nq data/mnq_2026_1min.csv --history data/Dataset_NQ_1min_2022_2025.csv
+```
+
+---
+
+## Launching the Dashboard
+
+```bash
+# Mac/Linux
+python3 frontend/server.py
+
+# Windows
 python frontend/server.py
 ```
 
@@ -130,31 +189,27 @@ Open **http://localhost:8080** in your browser. The dashboard has four tabs:
 | **Monte Carlo** | Eval pass rate simulation, funded account simulation, probability outcomes across 25,000 runs. |
 | **Strategy Rules** | Complete reference for all 12 models, exit mechanics, risk sizing, daily controls, and TopStepX account rules. |
 
+To stop the dashboard: press `Ctrl+C` in the terminal.
+
 ---
 
 ## Connecting to TopStepX (Live Trading)
 
-Follow these steps to connect the bot to your TopStepX account.
+You need a TopStepX account to trade live or paper trade. The backtest and dashboard work without one.
 
-### Step 1. Get Your API Key
+### Step 1. Get Your API Credentials
 
-1. Log in to your TopStepX account at [topstepx.com](https://topstepx.com)
-2. Navigate to **API Access** in your account dashboard
-3. Generate or copy your API key
-
-You need two pieces of information:
-- **Username** -- your TopStepX login username
-- **API Key** -- the key from the API Access page
+1. Log in at [topstepx.com](https://topstepx.com)
+2. Go to **API Access** in your account dashboard
+3. Copy your **username** and **API key**
 
 ### Step 2. Create Your .env File
-
-Copy the example file:
 
 ```bash
 cp .env.example .env
 ```
 
-Open the `.env` file in any text editor and fill in your credentials:
+Open `.env` in any text editor and fill in your credentials:
 
 ```env
 TOPSTEP_USER=your_topstep_username
@@ -164,19 +219,23 @@ TOPSTEP_ENV=demo
 
 | Variable | What to Enter |
 |:--|:--|
-| `TOPSTEP_USER` | Your TopStepX login username (the one you use to sign in) |
+| `TOPSTEP_USER` | Your TopStepX login username |
 | `TOPSTEP_API_KEY` | The API key from your TopStepX dashboard |
-| `TOPSTEP_ENV` | Set to `demo` for paper trading, or `live` for your real funded account |
+| `TOPSTEP_ENV` | `demo` for paper trading, `live` for real funded account |
 
 ### Step 3. Run in Demo Mode First
 
-Always start with demo mode to verify everything connects properly:
+Always start with demo to verify the connection works:
 
 ```bash
+# Mac/Linux
+python3 run_live.py
+
+# Windows
 python run_live.py
 ```
 
-You should see output like this:
+You should see:
 ```
 +============================================================+
 |          NQ TRADING BOT -- TOPSTEP 100K XFA                 |
@@ -190,20 +249,22 @@ You should see output like this:
 +============================================================+
 ```
 
-If you see `Connection failed`, double-check your `.env` credentials.
-
 ### Step 4. Go Live
 
-Once demo mode works, switch to live:
+Once demo mode works:
 
 ```bash
+# Mac/Linux
+python3 run_live.py --env live
+
+# Windows
 python run_live.py --env live
 ```
 
 The bot will:
 1. Authenticate with TopStepX via REST API
-2. Load approximately 83 days of 1-minute history for regime warmup
-3. Detect the current front-month MNQ contract automatically
+2. Load ~83 days of 1-minute history for regime warmup
+3. Auto-detect the current front-month MNQ contract
 4. Begin trading all 12 models autonomously
 
 **To stop the bot:** Press `Ctrl+C`. This flattens all open positions and cancels pending orders before exiting.
@@ -212,10 +273,13 @@ The bot will:
 
 | Problem | Solution |
 |:--|:--|
+| `ModuleNotFoundError: No module named 'pandas'` | Run `pip3 install -r requirements.txt` (or `pip install` on Windows) |
 | `ERROR: Missing credentials` | Make sure `.env` exists and has `TOPSTEP_USER` and `TOPSTEP_API_KEY` filled in |
 | `Connection failed: Auth failed` | Your username or API key is incorrect. Re-check them on the TopStepX dashboard |
-| `Contract not found` | The bot auto-detects the front-month MNQ contract. If this fails, the quarterly rollover may be in progress. Wait until the new contract is active |
+| `Contract not found` | The bot auto-detects the front-month MNQ contract. If this fails, the quarterly rollover may be in progress -- wait for the new contract to activate |
 | `No active accounts found` | Your TopStepX account may be inactive or expired. Check your account status on the TopStepX dashboard |
+| `pip3: command not found` | Try `pip` instead of `pip3`, or `python3 -m pip install -r requirements.txt` |
+| `Permission denied` on Mac | Add `--user` flag: `pip3 install --user -r requirements.txt` |
 
 ---
 
