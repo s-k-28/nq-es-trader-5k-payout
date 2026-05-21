@@ -65,11 +65,11 @@ Each year tested out-of-sample using only data from that year:
 
 | | |
 |:--:|:--:|
-| ![Equity Curve](chart_equity_drawdown.png) | ![Model Breakdown](chart_model_breakdown.png) |
+| ![Equity Curve](output/charts/chart_equity_drawdown.png) | ![Model Breakdown](output/charts/chart_model_breakdown.png) |
 | Equity Curve and Drawdown | Per-Model Performance |
-| ![Monthly Yearly](chart_monthly_yearly.png) | ![Monte Carlo](chart_funded_mc.png) |
+| ![Monthly Yearly](output/charts/chart_monthly_yearly.png) | ![Monte Carlo](output/charts/chart_funded_mc.png) |
 | Monthly and Yearly Returns | Monte Carlo Funded Simulation |
-| ![Timing Analysis](chart_timing_analysis.png) | ![Walk Forward](chart_walkforward.png) |
+| ![Timing Analysis](output/charts/chart_timing_analysis.png) | ![Walk Forward](output/charts/chart_walkforward.png) |
 | Timing and Distribution | Walk-Forward Validation |
 
 ---
@@ -398,7 +398,6 @@ python run_multi.py --nq data/mnq_2026_1min.csv --history data/Dataset_NQ_1min_2
 ```
 nq-es-trader/
   config.py                        All parameters: strategy, risk, funded account rules
-  generate_charts.py               Full backtest + eval MC + funded MC + 6 chart PNGs
   run_live.py                      Live bot entry point (TopStepX 100K)
   run_multi.py                     Backtest runner with per-model reporting
 
@@ -441,6 +440,39 @@ nq-es-trader/
   frontend/
     index.html                     Interactive dashboard (4 tabs, Chart.js)
     server.py                      Dashboard server (trade API + chart images)
+
+  scripts/
+    generate_charts.py             Full backtest + eval MC + funded MC + 6 chart PNGs
+    run_optimization.py            Automated P($10K) parameter optimization
+    sim_topstep50k.py              TopStep 50K account simulation
+    fetch_data.py                  Data fetching utilities
+    show_daily.py                  Daily P&L viewer
+    show_payout_timeline.py        Payout timeline projections
+
+  output/
+    charts/                        Generated chart PNGs (6 files)
+    trades/                        Backtest and live trade CSVs
+
+  docs/
+    SETUP_MAC.md                   Mac setup guide
+    optimization_log.md            Parameter optimization history
+
+  launchers/
+    start_bot.command              Mac double-click launcher
+    start_bot.bat                  Windows double-click launcher
+
+  tests/
+    conftest.py                    Test fixtures
+    test_live_robustness.py        Live execution robustness tests
+
+  deploy/
+    setup.sh                       Server setup script
+    deploy.sh                      Deployment script
+    hub/                           Monitoring hub server
+
+  cloud/
+    README_CLOUD.md                Cloud deployment guide
+    setup_oracle.sh                Oracle Cloud setup
 ```
 
 ---

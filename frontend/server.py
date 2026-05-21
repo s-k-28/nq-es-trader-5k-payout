@@ -7,8 +7,8 @@ import os
 
 PORT = 8080
 BASE = os.path.join(os.path.dirname(__file__), '..')
-TRADES_CSV = os.path.join(BASE, 'trades_backtest_full.csv')
-CHARTS_DIR = BASE
+TRADES_CSV = os.path.join(BASE, 'output', 'trades', 'trades_backtest_full.csv')
+CHARTS_DIR = os.path.join(BASE, 'output', 'charts')
 
 
 def load_trades(path):

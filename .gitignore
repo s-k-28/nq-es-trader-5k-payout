@@ -13,9 +13,9 @@ env/
 data/archive.zip
 data/v*_trades.csv
 
-# Generated images (but not chart_*.png for README)
+# Generated images
 *.png
-!chart_*.png
+!output/charts/chart_*.png
 
 # OS
 .DS_Store

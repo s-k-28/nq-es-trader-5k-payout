@@ -302,7 +302,7 @@ def compare_rules():
 
 
 def main():
-    df = pd.read_csv('trades_current.csv')
+    df = pd.read_csv('output/trades/trades_current.csv')
 
     compare_rules()
 

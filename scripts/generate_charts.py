@@ -154,10 +154,10 @@ def fig1_equity_and_drawdown(df, cfg, trades):
                  fontsize=10, color='#D32F2F',
                  arrowprops=dict(arrowstyle='->', color='#D32F2F'))
 
-    fig.savefig('chart_equity_drawdown.png', dpi=180, bbox_inches='tight',
+    fig.savefig('output/charts/chart_equity_drawdown.png', dpi=180, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print("  Saved chart_equity_drawdown.png")
+    print("  Saved output/charts/chart_equity_drawdown.png")
     return daily_pnl, all_dates
 
 
@@ -242,10 +242,10 @@ def fig2_model_breakdown(df):
     ax5.set_title('Exit Reasons (colored by avg R)', fontsize=12, fontweight='bold')
     ax5.set_xlabel('Count')
 
-    fig.savefig('chart_model_breakdown.png', dpi=180, bbox_inches='tight',
+    fig.savefig('output/charts/chart_model_breakdown.png', dpi=180, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print("  Saved chart_model_breakdown.png")
+    print("  Saved output/charts/chart_model_breakdown.png")
 
 
 def fig3_monthly_yearly(df, daily_pnl, all_dates, cfg, trades):
@@ -344,10 +344,10 @@ def fig3_monthly_yearly(df, daily_pnl, all_dates, cfg, trades):
     lines2, labels2 = ax3r.get_legend_handles_labels()
     ax3.legend(lines1 + lines2, labels1 + labels2, loc='upper left', fontsize=9)
 
-    fig.savefig('chart_monthly_yearly.png', dpi=180, bbox_inches='tight',
+    fig.savefig('output/charts/chart_monthly_yearly.png', dpi=180, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print("  Saved chart_monthly_yearly.png")
+    print("  Saved output/charts/chart_monthly_yearly.png")
 
 
 def fig4_funded_mc(daily_pnl, all_dates, cfg):
@@ -516,10 +516,10 @@ def fig4_funded_mc(daily_pnl, all_dates, cfg):
 
     ax4.set_title('Monte Carlo Summary Statistics', fontsize=12, fontweight='bold', pad=20)
 
-    fig.savefig('chart_funded_mc.png', dpi=180, bbox_inches='tight',
+    fig.savefig('output/charts/chart_funded_mc.png', dpi=180, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print("  Saved chart_funded_mc.png")
+    print("  Saved output/charts/chart_funded_mc.png")
 
     return {'survival_rate': survival_rate, 'p5k': p5k, 'p10k': p10k,
             'avg_extraction': exs.mean(), 'median_extraction': np.median(exs)}
@@ -638,10 +638,10 @@ def fig5_timing_analysis(df):
     ax6.legend(fontsize=8, ncol=2)
     ax6.grid(True, alpha=0.2)
 
-    fig.savefig('chart_timing_analysis.png', dpi=180, bbox_inches='tight',
+    fig.savefig('output/charts/chart_timing_analysis.png', dpi=180, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print("  Saved chart_timing_analysis.png")
+    print("  Saved output/charts/chart_timing_analysis.png")
 
 
 def fig6_walkforward(df, daily_pnl, all_dates, cfg, trades):
@@ -738,10 +738,10 @@ def fig6_walkforward(df, daily_pnl, all_dates, cfg, trades):
     ax4.xaxis.set_major_locator(mdates.MonthLocator(interval=4))
     ax4.grid(True, alpha=0.3)
 
-    fig.savefig('chart_walkforward.png', dpi=180, bbox_inches='tight',
+    fig.savefig('output/charts/chart_walkforward.png', dpi=180, bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     plt.close(fig)
-    print("  Saved chart_walkforward.png")
+    print("  Saved output/charts/chart_walkforward.png")
     return year_results
 
 
@@ -818,7 +818,7 @@ def main():
 
     print_summary(df, mc_stats, year_results, eval_stats)
 
-    print(f"\nAll charts saved:")
+    print(f"\nAll charts saved to output/charts/:")
     print(f"  1. chart_equity_drawdown.png  - Main equity curve + daily P&L + drawdown")
     print(f"  2. chart_model_breakdown.png  - Per-model equity, WR, expectancy, exits")
     print(f"  3. chart_monthly_yearly.png   - Monthly heatmap + yearly bars")

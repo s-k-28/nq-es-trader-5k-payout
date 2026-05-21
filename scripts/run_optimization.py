@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from optimize_p10k import walk_forward_p10k
 from config import Config
 
-LOG_FILE = 'optimization_log.md'
+LOG_FILE = 'docs/optimization_log.md'
 THRESHOLD = 0.5
 DATA_PATH = 'data/Dataset_NQ_1min_2022_2025.csv'
 
