@@ -43,7 +43,10 @@ def trades_to_daily_pnl(
                 continue
 
         daily_pnl[d] = daily_pnl.get(d, 0.0) + trade_pnl
-        daily_running[d] = daily_running.get(d, 0.0) + trade_pnl
+        new_running = daily_running.get(d, 0.0) + trade_pnl
+        if dlc is not None and dlc > 0:
+            new_running = max(new_running, -dlc)
+        daily_running[d] = new_running
 
     if dlc is not None and dlc > 0:
         for d in daily_pnl:
@@ -53,6 +56,20 @@ def trades_to_daily_pnl(
     return np.array([daily_pnl.get(d, 0.0) for d in all_dates])
 
 
+def _block_bootstrap(daily_pnl: np.ndarray, rng: np.random.Generator,
+                     n_days: int, block_size: int = 5) -> np.ndarray:
+    n = len(daily_pnl)
+    if n == 0:
+        return np.zeros(n_days)
+    if n < block_size:
+        return rng.choice(daily_pnl, size=n_days, replace=True)
+    max_start = n - block_size
+    blocks_needed = (n_days + block_size - 1) // block_size
+    starts = rng.integers(0, max_start + 1, size=blocks_needed)
+    sample = np.concatenate([daily_pnl[s:s + block_size] for s in starts])
+    return sample[:n_days]
+
+
 def simulate_funded_account(
     daily_pnl: np.ndarray,
     rng: np.random.Generator,
@@ -60,7 +77,7 @@ def simulate_funded_account(
     n_days: int = 60,
 ) -> tuple[float, int, bool]:
     funded = cfg.funded
-    sample = rng.choice(daily_pnl, size=n_days, replace=True)
+    sample = _block_bootstrap(daily_pnl, rng, n_days)
 
     balance = 0.0
     peak = 0.0
@@ -114,7 +131,7 @@ def simulate_eval(
     max_days: int = 200,
 ) -> tuple[int, bool]:
     funded = cfg.funded
-    sample = rng.choice(daily_pnl, size=max_days, replace=True)
+    sample = _block_bootstrap(daily_pnl, rng, max_days)
 
     balance = 0.0
     peak = 0.0
@@ -189,9 +206,9 @@ def run_monte_carlo(
         'p10k': (exs >= 10000).sum() / n_sims * 100,
         'avg_extraction': exs.mean(),
         'median_extraction': np.median(exs),
-        'daily_wr': len(wins) / len(active) * 100 if len(active) else 0,
-        'daily_wl': wins.mean() / abs(losses.mean()) if len(losses) else 0,
-        'green_day_rate': (daily_pnl >= cfg.funded.green_day_min).sum() / len(active) * 100 if len(active) else 0,
+        'backtest_daily_wr': len(wins) / len(active) * 100 if len(active) else 0,
+        'backtest_daily_wl': wins.mean() / abs(losses.mean()) if len(losses) else 0,
+        'backtest_green_day_rate': (daily_pnl >= cfg.funded.green_day_min).sum() / len(active) * 100 if len(active) else 0,
         'trading_days': len(active),
         'avg_win': wins.mean() if len(wins) else 0,
         'avg_loss': abs(losses.mean()) if len(losses) else 0,

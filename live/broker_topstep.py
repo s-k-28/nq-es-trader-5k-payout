@@ -77,6 +77,10 @@ class TopStepBroker:
                  account_id: int | None = None):
         urls = URLS[env]
         self.base = urls['rest']
+        self.env = env
+        if env == 'live':
+            log.warning("*** LIVE MODE — real money at risk. TopStepX uses the same API "
+                        "endpoint for demo and live; account type determines behavior. ***")
         self.token = None
         self.token_expiry = None
         self.username = username
@@ -168,6 +172,14 @@ class TopStepBroker:
     def _ensure_token(self):
         if self.token and time.time() < self.token_expiry - 1800:
             return
+        if getattr(self, '_refreshing', False):
+            for _ in range(10):
+                time.sleep(1)
+                if not self._refreshing:
+                    return
+            log.warning("Token refresh wait timed out — proceeding with current token")
+            return
+        self._refreshing = True
         log.info("Refreshing token...")
         try:
             resp = requests.post(
@@ -182,6 +194,8 @@ class TopStepBroker:
         except Exception as e:
             log.warning(f"Token refresh failed ({e}), performing full re-auth...")
             self.connect()
+        finally:
+            self._refreshing = False
 
     # ── Market Data ──────────────────────────────────────────────────
 
@@ -342,14 +356,18 @@ class TopStepBroker:
             for o in data.get('orders', []):
                 if o.get('id') == order_id:
                     return o.get('status')
-            # Order not in open list: infer from position.
-            # If position exists, likely filled. If no position, return None
-            # (unknown) rather than assuming cancelled -- an orphan position
-            # from a previous trade must not cause a new order to look filled,
-            # and absence of position does not prove cancellation. The executor
-            # timeout handles the None/unknown case via re-polling.
-            if self.position_size() > 0:
-                return ORD_FILLED
+            # Order not in open list — check filled orders.
+            # Do NOT infer fill from position_size alone: an orphan position
+            # from a prior session would cause a false positive.
+            try:
+                filled_data = self._post('/api/Order/searchFilled', {
+                    'accountId': self.account_id,
+                })
+                for o in filled_data.get('orders', []):
+                    if o.get('id') == order_id:
+                        return ORD_FILLED
+            except Exception:
+                pass
             return None
         except Exception:
             return None
@@ -454,8 +472,8 @@ class TopStepBroker:
                     p = tr.get('price')
                     if p:
                         return float(p)
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"Failed to fetch exit fill price: {e}")
         return None
 
     # ── Helpers ──────────────────────────────────────────────────────

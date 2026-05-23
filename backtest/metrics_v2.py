@@ -33,15 +33,15 @@ class MetricsV2:
         df = self.df
         n = len(df)
         w = df[df['total_r'] > 0]
-        l = df[df['total_r'] <= 0]
+        losers = df[df['total_r'] <= 0]
 
         wr = len(w) / n
         avg_w = w['total_r'].mean() if len(w) else 0
-        avg_l = l['total_r'].mean() if len(l) else 0
+        avg_l = losers['total_r'].mean() if len(losers) else 0
         exp = df['total_r'].mean()
 
         gp = w['total_r'].sum() if len(w) else 0
-        gl = abs(l['total_r'].sum()) if len(l) else 1
+        gl = abs(losers['total_r'].sum()) if len(losers) else 0
         pf = gp / gl if gl > 0 else float('inf')
 
         cum = df['total_r'].cumsum()
@@ -408,7 +408,9 @@ class MetricsV2:
             blown = False
 
             for day_i in range(sim_days):
-                idx = (start + day_i) % n
+                idx = start + day_i
+                if idx >= n:
+                    break
 
                 day_usd = r_vals[idx] * risk_per_contract_ticks * contracts * mnq_tick_val
 

@@ -44,13 +44,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json_response(load_trades(TRADES_CSV))
             return
         if self.path.startswith('/charts/'):
-            filename = self.path.replace('/charts/', '')
+            filename = os.path.basename(self.path.replace('/charts/', ''))
             filepath = os.path.join(CHARTS_DIR, filename)
-            if os.path.exists(filepath) and filepath.endswith('.png'):
+            real = os.path.realpath(filepath)
+            if (real.startswith(os.path.realpath(CHARTS_DIR))
+                    and real.endswith('.png') and os.path.exists(real)):
                 self.send_response(200)
                 self.send_header('Content-Type', 'image/png')
                 self.end_headers()
-                with open(filepath, 'rb') as f:
+                with open(real, 'rb') as f:
                     self.wfile.write(f.read())
                 return
         return super().do_GET()
@@ -58,12 +60,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _json_response(self, data):
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Origin', f'http://localhost:{PORT}')
         self.end_headers()
         self.wfile.write(json.dumps(data).encode())
 
 
 if __name__ == '__main__':
     print(f"Dashboard running at http://localhost:{PORT}")
-    server = http.server.HTTPServer(('', PORT), Handler)
+    server = http.server.HTTPServer(('127.0.0.1', PORT), Handler)
     server.serve_forever()

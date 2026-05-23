@@ -266,20 +266,24 @@ class IBBroker:
 
     def flatten(self) -> bool:
         self.cancel_all_exit_orders()
-        pos_size = self.position_size()
-        if pos_size != 0:
+        for attempt in range(3):
+            pos_size = self.position_size()
+            if pos_size == 0:
+                log.info("Position flattened and verified.")
+                return True
             action = 'SELL' if pos_size > 0 else 'BUY'
             order = MarketOrder(action, abs(pos_size))
             self.ib.placeOrder(self.contract, order)
             self.ib.sleep(2)
             remaining = self.position_size()
-            if remaining != 0:
-                log.error(f"Flatten incomplete — {remaining} contracts still open")
-                return False
-            log.info("Position flattened.")
-        else:
-            log.info("No position to flatten.")
-        return True
+            if remaining == 0:
+                log.info("Position flattened and verified.")
+                return True
+            log.warning(f"Flatten sent but {remaining} contracts remain (attempt {attempt+1})")
+            if attempt < 2:
+                self.ib.sleep(2)
+        log.error("FLATTEN VERIFICATION FAILED — POSITION MAY BE OPEN")
+        return False
 
     def get_position(self) -> dict | None:
         self.ib.sleep(0.1)
@@ -317,8 +321,8 @@ class IBBroker:
         summary['name'] = f'IB-{self.account_id}'
         return summary
 
-    def get_exit_fill_price(self, entry_time: datetime = None) -> float | None:
-        """Return the fill price of the most recent exit on this contract."""
+    def get_exit_fill_price(self, entry_time=None) -> float | None:
+        """Return the fill price of the most recent execution on this contract."""
         try:
             fills = self.ib.fills()
             contract_fills = [f for f in fills

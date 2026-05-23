@@ -94,6 +94,7 @@ class LiveExecutor:
         self.green_days = 0
         self.total_days = 0
         self.consec_losses = 0
+        self.halted = False
 
         self.daily_win_cap = 2.0
         self.consec_cooldown = 10
@@ -143,21 +144,39 @@ class LiveExecutor:
 
         self._check_orphan_position()
 
-        # Reconstruct daily state on mid-session restart
+        # Reconstruct daily state on mid-session restart from decision log
         now_ct = datetime.now(CT)
         if now_ct.time() > dt_time(5, 0) and now_ct.time() < dt_time(16, 0):
-            log.info("Mid-session start detected — reconstructing daily state from broker")
+            log.info("Mid-session start detected — reconstructing daily state from decision log")
+            today_str = now_ct.strftime('%Y-%m-%d')
             try:
-                today_start = datetime(now_ct.year, now_ct.month, now_ct.day, 5, 0, tzinfo=CT)
-                trades_today = self.broker.get_exit_fill_price(entry_time=today_start)
-                # Use balance delta as proxy for daily P&L
-                if hasattr(self, '_day_open_balance') and self._day_open_balance:
-                    delta = self.start_balance - self._day_open_balance
-                    if delta < 0:
-                        self.daily_pnl_usd = delta
-                        log.warning(f"Reconstructed daily P&L from balance: ${delta:,.0f}")
+                recovered_pnl = 0.0
+                recovered_r = 0.0
+                trade_count = 0
+                if os.path.exists(DECISION_LOG):
+                    with open(DECISION_LOG, 'r') as f:
+                        for line in f:
+                            try:
+                                rec = json.loads(line.strip())
+                            except (json.JSONDecodeError, ValueError):
+                                continue
+                            ts = rec.get('timestamp', '')
+                            if not ts.startswith(today_str):
+                                continue
+                            if rec.get('action') == 'trade_closed':
+                                recovered_pnl += rec.get('pnl_usd', 0.0)
+                                recovered_r += rec.get('total_r', 0.0)
+                                trade_count += 1
+                if trade_count > 0:
+                    self.daily_pnl_usd = recovered_pnl
+                    self.daily_r = recovered_r
+                    log.warning(
+                        f"Reconstructed daily state: {trade_count} trades, "
+                        f"{recovered_r:+.2f}R, ${recovered_pnl:+,.0f}")
+                else:
+                    log.info("No prior trades found in decision log for today")
             except Exception:
-                log.warning("Could not reconstruct daily P&L from broker")
+                log.warning("Could not reconstruct daily P&L from decision log")
 
         self.guard.load_state(ADAPTIVE_STATE)
 
@@ -229,6 +248,9 @@ class LiveExecutor:
         self.daily_df = build_daily_bars(self.buf)
         self.daily_df['date'] = pd.to_datetime(self.daily_df['date']).dt.date
 
+        if self.halted:
+            return
+
         if self.trade:
             self._manage_trade()
         else:
@@ -295,6 +317,9 @@ class LiveExecutor:
         return len(new)
 
     def _check_signals(self):
+        if self.halted:
+            return
+
         now = datetime.now(CT)
         if now.time() >= dt_time(15, 45):
             return
@@ -673,7 +698,19 @@ class LiveExecutor:
                         'action': 'bracket_incomplete', 'reason': 'missing_order_ids',
                         'model': t.signal.model, 'exit_ids': exit_ids,
                     })
-                    self.broker.flatten()
+                    if not self.broker.flatten():
+                        log.critical("EMERGENCY: Flatten failed after incomplete bracket — position is NAKED")
+                        self.alerts.error(
+                            "EMERGENCY: Flatten failed. Position may be open with NO stop. "
+                            "Manual intervention required IMMEDIATELY.")
+                        self._log_decision({
+                            'action': 'flatten_failed_emergency',
+                            'model': t.signal.model,
+                            'direction': t.direction,
+                            'contracts': t.contracts,
+                        })
+                        self.halted = True
+                        return
                     self._reset_trade()
                     return
             except Exception as e:
@@ -682,7 +719,19 @@ class LiveExecutor:
                     'action': 'bracket_failed', 'reason': 'exception',
                     'model': t.signal.model, 'error': str(e),
                 })
-                self.broker.flatten()
+                if not self.broker.flatten():
+                    log.critical("EMERGENCY: Flatten failed after bracket failure — position is NAKED")
+                    self.alerts.error(
+                        "EMERGENCY: Flatten failed. Position may be open with NO stop. "
+                        "Manual intervention required IMMEDIATELY.")
+                    self._log_decision({
+                        'action': 'flatten_failed_emergency',
+                        'model': t.signal.model,
+                        'direction': t.direction,
+                        'contracts': t.contracts,
+                    })
+                    self.halted = True
+                    return
                 self._reset_trade()
                 return
 
@@ -804,11 +853,38 @@ class LiveExecutor:
 
         if not self.shadow:
             if not self.broker.flatten():
-                log.error("CRITICAL: Flatten failed in _close_trade — attempting emergency market order")
+                log.critical("EMERGENCY: Flatten failed in _close_trade — position is NAKED")
+                self.alerts.error(
+                    "EMERGENCY: Flatten failed in _close_trade. Position may be open with NO stop. "
+                    "Manual intervention required IMMEDIATELY.")
+                bar = self.buf.iloc[-1] if not self.buf.empty else None
+                est_r = 0.0
+                est_pnl = 0.0
+                if bar is not None and t.risk > 0:
+                    is_long = t.direction == 'long'
+                    raw = (bar['close'] - t.entry_price) if is_long else (t.entry_price - bar['close'])
+                    est_r = raw / t.risk
+                    est_pnl = est_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
+                self.daily_r += est_r
+                self.daily_pnl_usd += est_pnl
                 self._log_decision({
-                    'action': 'flatten_failed', 'reason': reason,
+                    'action': 'flatten_failed_emergency', 'reason': reason,
                     'model': t.signal.model,
+                    'direction': t.direction,
+                    'contracts': t.contracts,
                 })
+                self._log_decision({
+                    'action': 'trade_closed',
+                    'model': t.signal.model, 'direction': t.direction,
+                    'entry': t.entry_price, 'total_r': round(est_r, 3),
+                    'pnl_usd': round(est_pnl, 2), 'reason': 'flatten_failed',
+                    'entry_time': t.entry_time.isoformat(),
+                    'exit_time': datetime.now(CT).isoformat(),
+                    'daily_r': round(self.daily_r, 3),
+                    'daily_pnl': round(self.daily_pnl_usd, 2),
+                })
+                self.halted = True
+                return
 
         bar = self.buf.iloc[-1] if not self.buf.empty else None
         if bar is not None:
@@ -879,14 +955,21 @@ class LiveExecutor:
             else:
                 log.info("Shutdown -- flattening open position")
                 if not self.broker.flatten():
-                    log.error("CRITICAL: Shutdown flatten FAILED")
+                    log.critical("EMERGENCY: Shutdown flatten FAILED — position may be NAKED")
+                    self.alerts.error(
+                        "EMERGENCY: Shutdown flatten failed. Position may remain open. "
+                        "Manual intervention required IMMEDIATELY.")
             self._reset_trade()
+            self.halted = True
 
         pos = self.broker.position_size()
         if pos > 0:
             log.warning(f"Shutdown -- still have {pos} contracts, force flatten")
             if not self.broker.flatten():
-                log.error("CRITICAL: Shutdown force flatten FAILED")
+                log.critical("EMERGENCY: Shutdown force flatten FAILED — position is NAKED")
+                self.alerts.error(
+                    f"EMERGENCY: Shutdown force flatten failed. {pos} contracts may remain open. "
+                    "Manual intervention required IMMEDIATELY.")
 
         self.guard.save_state(ADAPTIVE_STATE)
         self.guard.save_journal(ADAPTIVE_JOURNAL)

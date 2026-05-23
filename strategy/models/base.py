@@ -1,13 +1,13 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import pandas as pd
 from config import Config
 
 
 @dataclass
 class ModelRiskProfile:
-    min_risk_ticks: int = 100
+    min_risk_ticks: int = 40
     max_risk_ticks: int = 80
     min_rr: float = 2.0
     be_trigger_rr: float = 1.5
@@ -54,13 +54,13 @@ class BaseModel(ABC):
         ...
 
     def _risk_ok(self, risk: float, reward: float) -> bool:
+        if risk <= 0:
+            return False
         rp = self.risk_profile
         ticks = risk / self.tick
         floor = max(rp.min_risk_ticks, GLOBAL_MIN_RISK_TICKS)
         ceiling = min(rp.max_risk_ticks, GLOBAL_MAX_RISK_TICKS)
         if not (floor <= ticks <= ceiling):
-            return False
-        if risk <= 0:
             return False
         return (reward / risk) >= rp.min_rr
 
