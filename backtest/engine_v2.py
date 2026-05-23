@@ -134,17 +134,13 @@ class BacktestEngineV2:
                 hit_target = (not trailing) and b['low'] <= sig.target
 
             if hit_stop and hit_target:
-                if is_long:
-                    dist_to_stop = abs(b['open'] - cur_stop)
-                    dist_to_target = abs(b['open'] - sig.target)
-                else:
-                    dist_to_stop = abs(b['open'] - cur_stop)
-                    dist_to_target = abs(b['open'] - sig.target)
+                dist_to_stop = abs(b['open'] - cur_stop)
+                dist_to_target = abs(b['open'] - sig.target)
                 if dist_to_stop <= dist_to_target:
                     self._close(trade, b, cur_stop, 'stop_ambiguous',
                                 is_long, partial_r, partial, partial_pct)
                 else:
-                    self._close(trade, b, sig.target, 'target_ambiguous',
+                    self._close(trade, b, sig.target, 'target',
                                 is_long, partial_r, partial, partial_pct)
                 break
 
@@ -200,8 +196,7 @@ class BacktestEngineV2:
             return
         slip = self.tick * 0.25
         if reason in ('stop', 'breakeven', 'trail', 'stop_ambiguous',
-                       'target_ambiguous', 'time_stop', 'session_close',
-                       'end_of_data'):
+                       'time_stop', 'session_close', 'end_of_data'):
             exit_price = exit_price - slip if is_long else exit_price + slip
         trade.exit_price = exit_price
         raw_r = ((exit_price - trade.entry_price) / risk if is_long

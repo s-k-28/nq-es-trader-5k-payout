@@ -193,7 +193,9 @@ class TopStepBroker:
             self.token_expiry = time.time() + 23 * 3600
         except Exception as e:
             log.warning(f"Token refresh failed ({e}), performing full re-auth...")
+            self._refreshing = False
             self.connect()
+            return
         finally:
             self._refreshing = False
 

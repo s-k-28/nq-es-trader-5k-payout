@@ -266,22 +266,26 @@ class IBBroker:
 
     def flatten(self) -> bool:
         self.cancel_all_exit_orders()
+        last_trade = None
         for attempt in range(3):
             pos_size = self.position_size()
             if pos_size == 0:
                 log.info("Position flattened and verified.")
                 return True
+            if last_trade is not None:
+                status = last_trade.orderStatus.status
+                if status not in ('Filled', 'Cancelled', 'Inactive'):
+                    self.ib.cancelOrder(last_trade.order)
+                    self.ib.sleep(1)
             action = 'SELL' if pos_size > 0 else 'BUY'
             order = MarketOrder(action, abs(pos_size))
-            self.ib.placeOrder(self.contract, order)
+            last_trade = self.ib.placeOrder(self.contract, order)
             self.ib.sleep(2)
             remaining = self.position_size()
             if remaining == 0:
                 log.info("Position flattened and verified.")
                 return True
             log.warning(f"Flatten sent but {remaining} contracts remain (attempt {attempt+1})")
-            if attempt < 2:
-                self.ib.sleep(2)
         log.error("FLATTEN VERIFICATION FAILED — POSITION MAY BE OPEN")
         return False
 
