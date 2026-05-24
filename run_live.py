@@ -55,9 +55,9 @@ def main():
 |              Open-Drive, Trend, PM Mom, EMA, Kalman, Sweep)  |
 |  Mode:       {args.env.upper():<47}|
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
-|  Max MNQ:    20 contracts | Min stop: 25 pts               |
+|  Max MNQ:    20 contracts | Min stop: 10 pts (40 ticks)     |
 |  Exits:      BE 0.6R | Trail 0.001 | No partials           |
-|  Daily:      Win cap 2.0R | DLC $800 | CC 10               |
+|  Daily:      Win cap 2.0R | DLC $1,000 | CC 10             |
 |  Account:    $3K trailing DD, static at $3K peak            |
 |  Payouts:    $5K max, 30% bal, 5 green days ($150+)         |
 +------------------------------------------------------------+

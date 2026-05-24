@@ -318,58 +318,196 @@ Signals outside these bounds are discarded before entry.
 
 ## Live Trading
 
-### Setup
+Three broker connections are supported. Choose the one that matches your account.
+
+---
+
+### Option A: TopStepX / Tradovate (Prop Firm)
+
+TopStepX uses Tradovate's ProjectX API as its execution backend. This is the primary deployment target.
+
+**Step 1. Get credentials:**
+
+1. Log in to [topstepx.com](https://topstepx.com)
+2. Go to **API Access** in your account dashboard
+3. Copy your **username** and **API key**
+
+**Step 2. Configure `.env`:**
 
 ```bash
 cp .env.example .env
 ```
 
-Configure `.env`:
+Edit `.env`:
 
 ```env
 TOPSTEP_USER=your_topstep_username
 TOPSTEP_API_KEY=your_api_key
-TOPSTEP_ENV=demo
+TOPSTEP_ENV=live
 ```
 
 | Variable | Description |
 |:--|:--|
-| `TOPSTEP_USER` | Your TopStepX login username |
-| `TOPSTEP_API_KEY` | API key from your TopStepX dashboard |
-| `TOPSTEP_ENV` | `demo` for paper trading, `live` for funded account |
+| `TOPSTEP_USER` | Your TopStepX login username (the one you sign in with) |
+| `TOPSTEP_API_KEY` | API key from your TopStepX dashboard → API Access |
+| `TOPSTEP_ENV` | `demo` for paper trading, `live` for real funded account |
+| `TOPSTEP_ACCOUNT_ID` | (Optional) Target a specific account ID if you have multiple |
 
-### Run
+**Step 3. Run:**
 
 ```bash
-# Demo mode (paper trading, no real orders)
-python3 run_live.py
+# Shadow mode first (generates signals, logs decisions, NO orders placed)
+python3 run_live.py --shadow
 
-# Live mode (real funded account)
+# Demo mode (places orders on demo account)
+python3 run_live.py --env demo
+
+# LIVE (real funded account — real money)
 python3 run_live.py --env live
 ```
 
-The bot will:
-1. Authenticate with TopStepX via REST API
-2. Load ~83 days of 1-minute history for regime warmup
-3. Detect the current front-month MNQ contract automatically
-4. Begin trading all 12 models autonomously
+**What happens on startup:**
+1. Authenticates via `POST /api/Auth/loginKey`
+2. Finds your active account (or targets `TOPSTEP_ACCOUNT_ID` if set)
+3. Detects front-month MNQ contract automatically (currently `MNQM26` — June 2026)
+4. Loads ~14 days of 1-min history (20,000 bars) for regime warmup
+5. Loads 90 daily bars from API for regime detection
+6. Begins 30-second tick loop, generating and executing signals
 
-**To stop:** Press `Ctrl+C`. Flattens all positions and cancels pending orders before exit.
+**Token refresh:** The API token refreshes automatically every 23 hours. A race-condition guard prevents concurrent refresh attempts.
+
+---
+
+### Option B: Interactive Brokers (TWS/Gateway)
+
+For personal brokerage accounts with IB.
+
+**Step 1. Install IB Gateway or TWS:**
+
+Download from [interactivebrokers.com/en/trading/ibgateway-stable.php](https://www.interactivebrokers.com/en/trading/ibgateway-stable.php)
+
+**Step 2. Configure IB Gateway:**
+
+1. Open IB Gateway (or TWS)
+2. Log in with your IB credentials
+3. Go to **Configure → Settings → API → Settings**:
+   - Enable **ActiveX and Socket Clients**
+   - Uncheck **Read-Only API**
+   - Set **Socket Port**: `4001` (live) or `4002` (paper)
+   - Set **Master API client ID**: `0` (allows any client ID to connect)
+4. Click **Apply** and **OK**
+
+**Step 3. Install ib_insync:**
+
+```bash
+pip install ib_insync
+```
+
+(Already in `requirements.txt` — if you ran `pip install -r requirements.txt`, you have it.)
+
+**Step 4. Run:**
+
+```bash
+# Paper trading (port 4002)
+python3 run_ib.py
+
+# LIVE trading (port 4001)
+python3 run_ib.py --port 4001
+
+# Custom host (e.g., IB Gateway running on another machine)
+python3 run_ib.py --host 192.168.1.100 --port 4001
+
+# Shadow mode (signals only, no orders)
+python3 run_ib.py --shadow
+```
+
+| Flag | Default | Description |
+|:--|:--|:--|
+| `--host` | `127.0.0.1` | IB Gateway/TWS host address |
+| `--port` | `4002` | `4002` = paper, `4001` = live |
+| `--client-id` | `1` | API client ID (change if running multiple bots) |
+| `--shadow` | off | Log signals without placing any orders |
+
+**What happens on startup:**
+1. Connects to IB Gateway via socket
+2. Qualifies front-month MNQ contract (CME)
+3. Loads historical bars for regime warmup
+4. Begins trading with the same executor as TopStepX
+
+---
+
+### Option C: Paper Trading (No Account Needed)
+
+Test the strategy with live market data, no brokerage required.
+
+```bash
+python3 run_paper.py
+```
+
+Pulls delayed NQ data from Yahoo Finance, runs all 12 models, simulates fills in real-time. Good for validating signals before going live.
+
+---
+
+### Pre-Deployment Checklist
+
+Before going live, verify each item:
+
+| # | Check | Command / Action |
+|:--|:--|:--|
+| 1 | Python 3.10+ installed | `python3 --version` |
+| 2 | Dependencies installed | `pip install -r requirements.txt` |
+| 3 | Config imports clean | `python3 -c "from config import Config; print('OK')"` |
+| 4 | Live imports clean | `python3 -c "from live.executor_multi import LiveExecutor; print('OK')"` |
+| 5 | `.env` configured | Check `TOPSTEP_USER`, `TOPSTEP_API_KEY`, `TOPSTEP_ENV=live` |
+| 6 | Shadow test | Run `python3 run_live.py --shadow` for 5 min, verify signals generate |
+| 7 | Demo test | Run `python3 run_live.py --env demo`, verify orders place/cancel |
+| 8 | Telegram alerts (optional) | Set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` in `.env` |
+| 9 | Check contract | Look for `Contract: CON.F.US.MNQ.M26` in startup logs |
+| 10 | Verify account balance | Look for `Account balance: $XXX,XXX` in startup logs |
+
+### Telegram Alerts (Optional but Recommended)
+
+Get real-time trade notifications on your phone:
+
+1. Open Telegram, search **@BotFather**, send `/newbot`
+2. Name it (e.g., "NQ Trader Bot"), copy the **bot token**
+3. Search **@userinfobot**, send `/start`, copy your **chat ID**
+4. Add to `.env`:
+
+```env
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxyz
+TELEGRAM_CHAT_ID=987654321
+```
+
+You'll receive alerts for: bot start/stop, every trade entry/exit, daily summary, win cap hit, dollar loss cap warning, drawdown warnings.
+
+### Stopping the Bot
+
+Press `Ctrl+C`. The shutdown handler will:
+1. Cancel any pending entry orders
+2. Flatten any open position (3 attempts with verification)
+3. Save adaptive guard state
+4. Send "bot stopped" Telegram alert
+5. Write final decision log entry
+
+If the process crashes (power loss, SSH disconnect), on restart it will:
+- Detect any orphan positions and flatten them
+- Reconstruct daily P&L state from broker history
+- Resume normal operation
 
 ### Live Executor Architecture
 
 The live executor (`live/executor_multi.py`) implements:
 
 - **Limit entry orders** with 60-second timeout (auto-cancel if not filled)
-- **Bracket exits** (stop + target placed immediately after fill)
-- **Trailing stop advancement** via broker stop modification
-- **Breakeven move** with retry on failure
-- **Session flatten** at 3:55 PM ET
+- **Bracket exits** (stop + target placed immediately after fill confirmation)
+- **Trailing stop advancement** via broker stop modification (reverts on failure)
+- **Breakeven move** at 0.6R with retry on failure
+- **Session flatten** at 3:55 PM ET (5 minutes before close)
 - **Orphan position detection** on startup
-- **Mid-session restart** with state reconstruction
+- **Mid-session restart** with state reconstruction from broker
 - **Adaptive guard** for regime-aware position sizing
-- **Telegram alerts** for all entries, exits, and risk events
-- **Decision logging** with fsync for crash forensics
+- **Decision logging** with fsync for crash forensics (`live/state/decisions.jsonl`)
 
 ### Troubleshooting
 
@@ -377,8 +515,13 @@ The live executor (`live/executor_multi.py`) implements:
 |:--|:--|
 | `Missing credentials` | Verify `.env` has `TOPSTEP_USER` and `TOPSTEP_API_KEY` |
 | `Auth failed` | Re-check credentials on TopStepX dashboard |
-| `Contract not found` | Quarterly rollover may be in progress; wait for new contract |
-| `No active accounts` | Check account status on TopStepX dashboard |
+| `Contract not found` | Quarterly rollover in progress — wait for new contract to activate |
+| `No active accounts` | Check account status on TopStepX dashboard; may be expired |
+| `Rate limited (429)` | Automatic retry with exponential backoff (2s, 4s, 8s, 16s) |
+| `Connection refused` (IB) | IB Gateway not running or wrong port. Check API settings. |
+| `Could not qualify MNQ` (IB) | Market data subscription needed for CME futures |
+| Bot stops generating signals | Check if daily win cap (2.0R) or DLC ($1,000) was hit |
+| `FLATTEN VERIFICATION FAILED` | **CRITICAL** — manual intervention required, check broker platform |
 
 ---
 

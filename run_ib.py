@@ -49,7 +49,7 @@ def main():
 |  Broker:     IB Gateway @ {args.host}:{args.port:<25}|
 |  Mode:       {mode:<47}|
 |  Risk tiers: OU $2,500 | PD $900 | rest $400               |
-|  Max MNQ:    20 contracts | Min stop: 25 pts               |
+|  Max MNQ:    20 contracts | Min stop: 10 pts (40 ticks)     |
 |  Exits:      BE 0.6R | Trail 0.001 | No partials           |
 |  Daily:      Win cap 2.0R | DLC $1,000 | CC 10             |
 +------------------------------------------------------------+
