@@ -10,9 +10,12 @@ Setup:
        TELEGRAM_CHAT_ID=your_chat_id
 """
 from __future__ import annotations
+import logging
 import threading
 import os
 import requests
+
+log = logging.getLogger(__name__)
 
 
 class TelegramAlerts:
@@ -20,6 +23,10 @@ class TelegramAlerts:
         self.token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         self.enabled = bool(self.token and self.chat_id)
+        if self.enabled:
+            log.info("Telegram alerts ENABLED — notifications will be sent")
+        else:
+            log.warning("Telegram alerts DISABLED — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env")
 
     def _send(self, text: str):
         if not self.enabled:

@@ -10,7 +10,10 @@ Usage:
 """
 import argparse
 import logging
+from dotenv import load_dotenv
 from config import Config, InstrumentConfig
+
+load_dotenv()
 from live.broker_ib import IBBroker
 from live.executor_multi import LiveExecutor
 
