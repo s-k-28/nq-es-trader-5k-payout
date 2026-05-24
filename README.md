@@ -26,6 +26,44 @@ All models share identical exit mechanics (trail stops, breakeven, time stops). 
 
 ---
 
+## Compatible Platforms
+
+| Platform | Type | Entry Point | Notes |
+|:--|:--|:--|:--|
+| **TopStepX** | Prop firm (funded) | `run_live.py` | Primary target. 100K XFA account. Uses ProjectX/Tradovate API. |
+| **Tradovate** | Retail / Prop | `run_live.py` | Same API as TopStepX — Tradovate IS the execution backend. |
+| **Interactive Brokers** | Retail brokerage | `run_ib.py` | Via IB Gateway/TWS. Requires `ib_insync` + CME market data subscription. |
+| **Paper (Yahoo Finance)** | Simulation | `run_paper.py` | No account needed. ~15 min delayed data. |
+
+**Important:** TopStepX and Tradovate use the same API (ProjectX). Your TopStepX login credentials ARE your Tradovate credentials. The bot connects to `api.topstepx.com` which routes to Tradovate's execution infrastructure. If you have a standalone Tradovate account (not through TopStepX), use the same `run_live.py` — the API is identical.
+
+---
+
+## Instrument Specification
+
+| Parameter | Value |
+|:--|:--|
+| Symbol | MNQ (Micro E-mini Nasdaq-100) |
+| Exchange | CME |
+| Tick size | 0.25 points |
+| Tick value | $0.50 per tick per contract |
+| Point value | $2.00 per point per contract |
+| Contract months | March (H), June (M), September (U), December (Z) |
+| Current front month | MNQM26 (June 2026) — auto-detected |
+| Trading hours | Sun 5:00 PM – Fri 4:00 PM CT (23/5) |
+| RTH (Regular Trading Hours) | 8:30 AM – 3:00 PM CT / 9:30 AM – 4:00 PM ET |
+| Bot active window | 9:30 AM – 3:55 PM ET (RTH only) |
+| Session flatten | 3:55 PM ET (mandatory, no overnight holds) |
+
+### Contract Rollover
+
+The bot auto-detects the front-month quarterly MNQ contract:
+- Rolls to the next quarter when current month is past the 15th of expiry month
+- No manual intervention needed — just restart the bot after rollover week
+- Rollover dates: ~March 15, ~June 15, ~September 15, ~December 15
+
+---
+
 ## Performance
 
 ### Backtest Results (Dec 2022 – May 2026)
@@ -63,6 +101,15 @@ Each year tested using only data from that year, with prior years providing regi
 | 2024 | 70.3% | 89.1% | $12,152 |
 | 2025 | 89.2% | 95.6% | $15,980 |
 | 2026 (Jan–Apr) | 97.7% | 98.2% | $23,896 |
+
+### Yearly Performance
+
+| Year | Total R | Trades | Win Rate | Avg R/Month |
+|:--|--:|--:|--:|--:|
+| 2023 | +164.6R | 851 | 44% | +13.7R |
+| 2024 | +178.1R | 971 | 42% | +14.8R |
+| 2025 | +203.7R | 756 | 44% | +17.0R |
+| 2026 (Jan–Apr) | +99.8R | 229 | 48% | +25.0R |
 
 ### 2026 Out-of-Sample Monthly Returns
 
@@ -322,15 +369,26 @@ Three broker connections are supported. Choose the one that matches your account
 
 ---
 
-### Option A: TopStepX / Tradovate (Prop Firm)
+### Option A: TopStepX / Tradovate (Prop Firm or Retail)
 
-TopStepX uses Tradovate's ProjectX API as its execution backend. This is the primary deployment target.
+TopStepX uses Tradovate's ProjectX API as its execution backend. Your TopStepX credentials ARE your Tradovate credentials — they are the same platform. This is the primary deployment target.
 
-**Step 1. Get credentials:**
+**Step 1. Get your API credentials:**
 
+**If you have a TopStepX account:**
 1. Log in to [topstepx.com](https://topstepx.com)
-2. Go to **API Access** in your account dashboard
-3. Copy your **username** and **API key**
+2. Go to **Account Dashboard → API Access**
+3. Generate or copy your **API key**
+4. Your **username** is the same one you use to log into TopStepX
+
+**If you have a standalone Tradovate account:**
+1. Log in to [tradovate.com](https://www.tradovate.com)
+2. Go to **Settings → API Access** (or **Account → API Keys**)
+3. Generate an API key
+4. Your **username** is your Tradovate login email/username
+5. Use the same `run_live.py` — the API endpoints are identical
+
+**How it works:** TopStepX is built on Tradovate's infrastructure. The authentication endpoint (`api.topstepx.com/api/Auth/loginKey`) accepts both TopStepX and Tradovate credentials. Orders route through Tradovate's matching engine to the CME.
 
 **Step 2. Configure `.env`:**
 
@@ -465,21 +523,43 @@ Before going live, verify each item:
 | 9 | Check contract | Look for `Contract: CON.F.US.MNQ.M26` in startup logs |
 | 10 | Verify account balance | Look for `Account balance: $XXX,XXX` in startup logs |
 
-### Telegram Alerts (Optional but Recommended)
+### Complete `.env` Reference
+
+```env
+# === REQUIRED (TopStepX / Tradovate) ===
+TOPSTEP_USER=your_username              # TopStepX or Tradovate login username
+TOPSTEP_API_KEY=your_api_key            # API key from dashboard → API Access
+TOPSTEP_ENV=live                        # "demo" or "live"
+
+# === OPTIONAL ===
+TOPSTEP_ACCOUNT_ID=12345678             # Target specific account (if you have multiple)
+
+# === TELEGRAM ALERTS (Recommended) ===
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxyz
+TELEGRAM_CHAT_ID=987654321
+
+# === LIVE DASHBOARD HUB (Optional) ===
+HUB_URL=http://your-server:9090         # Central reporting server
+HUB_USER_ID=trader1                     # Your identifier on the hub
+```
+
+### Telegram Alerts (Recommended for Live)
 
 Get real-time trade notifications on your phone:
 
 1. Open Telegram, search **@BotFather**, send `/newbot`
 2. Name it (e.g., "NQ Trader Bot"), copy the **bot token**
 3. Search **@userinfobot**, send `/start`, copy your **chat ID**
-4. Add to `.env`:
+4. Add both values to `.env`
 
-```env
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxyz
-TELEGRAM_CHAT_ID=987654321
-```
-
-You'll receive alerts for: bot start/stop, every trade entry/exit, daily summary, win cap hit, dollar loss cap warning, drawdown warnings.
+**Alerts you'll receive:**
+- Bot started / stopped
+- Every trade entry (model, direction, price, contracts, risk)
+- Every trade exit (R-multiple, P&L, reason)
+- Daily summary (trades, wins, daily R, daily P&L)
+- Win cap hit (stop signal — bot is done for the day)
+- Dollar loss cap warning
+- Drawdown proximity alerts (when cushion < $1,000)
 
 ### Stopping the Bot
 
@@ -508,6 +588,26 @@ The live executor (`live/executor_multi.py`) implements:
 - **Mid-session restart** with state reconstruction from broker
 - **Adaptive guard** for regime-aware position sizing
 - **Decision logging** with fsync for crash forensics (`live/state/decisions.jsonl`)
+
+### Adaptive Guard (Live Only)
+
+The adaptive guard (`live/adaptive.py`) is a defensive layer that scales position size down or pauses models based on live performance. It does NOT change the core strategy — only reduces exposure when conditions suggest higher risk.
+
+| Guard | What it does |
+|:--|:--|
+| Model losing streak | Scales down a model after consecutive losses in that model |
+| Hour-of-day performance | Reduces size during hours with historically poor performance |
+| High volatility (ATR ratio) | Scales down when current ATR >> average ATR |
+
+State is saved to `live/state/adaptive.json` and persists across restarts. All guard decisions are logged to `live/state/decisions.jsonl` for human review.
+
+### State Files
+
+| File | Purpose |
+|:--|:--|
+| `live/state/decisions.jsonl` | Append-only log of every decision (entries, skips, exits, errors) |
+| `live/state/adaptive.json` | Adaptive guard rolling performance state |
+| `live/state/journal.json` | Full audit trail of guard scale decisions |
 
 ### Troubleshooting
 
@@ -609,7 +709,13 @@ python3 run_multi.py --nq <data.csv> [options]
 
 ---
 
+## Disclaimer
+
+This software is provided as-is for educational and personal use. Trading futures involves substantial risk of loss and is not suitable for all investors. Past performance (backtested or simulated) does not guarantee future results. The authors are not responsible for any financial losses incurred from using this software. Always trade with money you can afford to lose.
+
+---
+
 <p align="center">
-  Built for TopStepX 100K funded accounts.<br>
+  Compatible with TopStepX · Tradovate · Interactive Brokers<br>
   Bias-free backtesting · Monte Carlo validated · Production-grade live execution
 </p>
