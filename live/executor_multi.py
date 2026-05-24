@@ -199,6 +199,10 @@ class LiveExecutor:
                     log.info("No prior trades found in decision log for today")
             except Exception:
                 log.warning("Could not reconstruct daily P&L from decision log")
+            self.cur_date = now_ct.date()
+            self._alerted_win_cap = False
+            self._alerted_dlc = False
+            self._day_open_balance = self.start_balance
 
         self.guard.load_state(ADAPTIVE_STATE)
 
@@ -253,19 +257,19 @@ class LiveExecutor:
         if now.time() < dt_time(5, 0):
             return
 
-        if self.halted:
-            return
-
         if now.time() >= dt_time(15, 55):
             if self.trade:
                 log.info("Session close -- flattening")
                 self._close_trade('session_close')
             if now.time() >= dt_time(16, 0) and now.time() < dt_time(16, 1):
-                trades_today = sum(1 for k in self.daily_model_count.values())
+                trades_today = sum(self.daily_model_count.values())
                 wins = max(0, int(trades_today * (0.5 + self.daily_r / max(trades_today, 1) * 0.1))) if trades_today > 0 else 0
                 self.alerts.daily_summary(
                     trades_today, wins, self.daily_r,
                     self.daily_pnl_usd, self.consec_losses)
+            return
+
+        if self.halted:
             return
 
         latest = self.broker.get_latest_bars(10)
@@ -726,6 +730,7 @@ class LiveExecutor:
                         self.alerts.error(
                             "EMERGENCY: Flatten failed. Position may be open with NO stop. "
                             "Manual intervention required IMMEDIATELY.")
+                        self._emergency_close_record(t, 'flatten_failed')
                         self._halt('flatten_failed_bracket_incomplete')
                         return
                     self._reset_trade()
@@ -740,6 +745,7 @@ class LiveExecutor:
                     self.alerts.error(
                         "EMERGENCY: Flatten failed. Position may be open with NO stop. "
                         "Manual intervention required IMMEDIATELY.")
+                    self._emergency_close_record(t, 'flatten_failed')
                     self._halt('flatten_failed_bracket_exception')
                     return
                 self._reset_trade()
@@ -773,6 +779,44 @@ class LiveExecutor:
         self._reset_trade()
         self._log_decision({'action': 'bot_halted', 'reason': reason})
         log.critical(f"BOT HALTED: {reason}")
+
+    def _emergency_close_record(self, t: LiveTrade, reason: str):
+        bar = self.buf.iloc[-1] if not self.buf.empty else None
+        est_r = 0.0
+        est_pnl = 0.0
+        if bar is not None and t.risk > 0:
+            is_long = t.direction == 'long'
+            raw = (bar['close'] - t.entry_price) if is_long else (t.entry_price - bar['close'])
+            raw -= TICK_SIZE * 0.25
+            est_r = raw / t.risk
+            if t.partial_taken and t.partial_r_locked > 0:
+                rp = t.signal.risk_profile
+                partial_pct = rp.partial_pct if rp else self.cfg.risk.partial_pct
+                est_r = t.partial_r_locked + (1 - partial_pct) * est_r
+            est_pnl = est_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
+        self.daily_r += est_r
+        self.daily_pnl_usd += est_pnl
+        if est_r <= -0.5:
+            self.consec_losses += 1
+        else:
+            self.consec_losses = 0
+        trade_record = {
+            'model': t.signal.model, 'direction': t.direction,
+            'entry': t.entry_price, 'stop': t.stop_price,
+            'target': t.target_price,
+            'risk_ticks': t.signal.risk_ticks, 'contracts': t.contracts,
+            'total_r': round(est_r, 3), 'pnl_usd': round(est_pnl, 2),
+            'reason': reason,
+            'entry_time': t.entry_time.isoformat(),
+            'exit_time': datetime.now(CT).isoformat(),
+            'daily_r': round(self.daily_r, 3),
+            'daily_pnl': round(self.daily_pnl_usd, 2),
+            'partial_taken': t.partial_taken,
+            'partial_r_locked': round(t.partial_r_locked, 3),
+            'mfe': round(t.mfe, 2),
+        }
+        self.reporter.report_trade(trade_record)
+        self._log_decision({'action': 'trade_closed', **trade_record})
 
     def _on_trade_closed(self):
         t = self.trade
@@ -872,33 +916,7 @@ class LiveExecutor:
                 self.alerts.error(
                     "EMERGENCY: Flatten failed in _close_trade. Position may be open with NO stop. "
                     "Manual intervention required IMMEDIATELY.")
-                bar = self.buf.iloc[-1] if not self.buf.empty else None
-                est_r = 0.0
-                est_pnl = 0.0
-                if bar is not None and t.risk > 0:
-                    is_long = t.direction == 'long'
-                    raw = (bar['close'] - t.entry_price) if is_long else (t.entry_price - bar['close'])
-                    est_r = raw / t.risk
-                    est_pnl = est_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
-                self.daily_r += est_r
-                self.daily_pnl_usd += est_pnl
-                trade_record = {
-                    'model': t.signal.model, 'direction': t.direction,
-                    'entry': t.entry_price, 'stop': t.stop_price,
-                    'target': t.target_price,
-                    'risk_ticks': t.signal.risk_ticks, 'contracts': t.contracts,
-                    'total_r': round(est_r, 3), 'pnl_usd': round(est_pnl, 2),
-                    'reason': 'flatten_failed',
-                    'entry_time': t.entry_time.isoformat(),
-                    'exit_time': datetime.now(CT).isoformat(),
-                    'daily_r': round(self.daily_r, 3),
-                    'daily_pnl': round(self.daily_pnl_usd, 2),
-                    'partial_taken': t.partial_taken,
-                    'partial_r_locked': round(t.partial_r_locked, 3),
-                    'mfe': round(t.mfe, 2),
-                }
-                self.reporter.report_trade(trade_record)
-                self._log_decision({'action': 'trade_closed', **trade_record})
+                self._emergency_close_record(t, 'flatten_failed')
                 self._halt('flatten_failed_close_trade')
                 return
 
