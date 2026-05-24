@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 from dataclasses import dataclass
 from config import Config
-from strategy.models.base import Signal
+from strategy.models.base import Signal, GLOBAL_MIN_RISK_TICKS, GLOBAL_MAX_RISK_TICKS
 
 
 @dataclass
@@ -82,17 +82,43 @@ class BacktestEngineV2:
         start_mask = df.index[df['datetime'] >= sig.ts]
         if len(start_mask) == 0:
             return None
-        fill_idx = start_mask[0]
+        signal_idx = start_mask[0]
 
-        risk = abs(sig.entry - sig.stop)
+        # Fill on NEXT bar's open — eliminates look-ahead bias
+        fill_idx = signal_idx + 1
+        if fill_idx >= len(df):
+            return None
+        fill_bar = df.iloc[fill_idx]
+        entry = fill_bar['open']
+
+        is_long = sig.direction == 'long'
+
+        # Skip if entry gapped past stop (trade is already a loser at open)
+        if is_long and entry <= sig.stop:
+            return None
+        if not is_long and entry >= sig.stop:
+            return None
+
+        # Re-validate risk with actual fill price
+        risk = abs(entry - sig.stop)
+        risk_ticks = risk / self.tick
+        rp = sig.risk_profile
+        if rp:
+            floor = max(rp.min_risk_ticks, GLOBAL_MIN_RISK_TICKS)
+            ceiling = min(rp.max_risk_ticks, GLOBAL_MAX_RISK_TICKS)
+            if not (floor <= risk_ticks <= ceiling):
+                return None
+            reward = abs(sig.target - entry)
+            if risk > 0 and (reward / risk) < rp.min_rr:
+                return None
+
         trade = Trade(
-            signal=sig, entry_time=sig.ts, entry_price=sig.entry,
+            signal=sig, entry_time=fill_bar['datetime'], entry_price=entry,
             direction=sig.direction, stop_price=sig.stop,
             target_price=sig.target, risk=risk,
-            risk_ticks=sig.risk_ticks, model=sig.model, tag=sig.tag,
+            risk_ticks=risk_ticks, model=sig.model, tag=sig.tag,
         )
 
-        rp = sig.risk_profile
         be_trigger = rp.be_trigger_rr if rp else self.cfg.risk.be_trigger_rr
         partial_rr = rp.partial_rr if rp else self.cfg.risk.partial_rr
         partial_pct = rp.partial_pct if rp else self.cfg.risk.partial_pct
@@ -106,28 +132,28 @@ class BacktestEngineV2:
         be = partial = False
         partial_r = 0.0
         mfe = 0.0
-        time_limit = sig.ts + pd.Timedelta(minutes=time_stop_min)
-        is_long = sig.direction == 'long'
+        time_limit = fill_bar['datetime'] + pd.Timedelta(minutes=time_stop_min)
 
-        for i in range(fill_idx + 1, len(df)):
+        # Start from fill bar — entry is at open, bar's H/L can trigger exits
+        for i in range(fill_idx, len(df)):
             b = df.iloc[i]
 
             if is_long:
-                best = b['high'] - sig.entry
+                best = b['high'] - entry
                 if best > mfe:
                     mfe = best
                     if trailing and trail_dist > 0:
-                        new_trail = sig.entry + mfe - trail_dist
+                        new_trail = entry + mfe - trail_dist
                         if new_trail > cur_stop:
                             cur_stop = self._round(new_trail)
                 hit_stop = b['low'] <= cur_stop
                 hit_target = (not trailing) and b['high'] >= sig.target
             else:
-                best = sig.entry - b['low']
+                best = entry - b['low']
                 if best > mfe:
                     mfe = best
                     if trailing and trail_dist > 0:
-                        new_trail = sig.entry - mfe + trail_dist
+                        new_trail = entry - mfe + trail_dist
                         if new_trail < cur_stop:
                             cur_stop = self._round(new_trail)
                 hit_stop = b['high'] >= cur_stop
@@ -163,7 +189,7 @@ class BacktestEngineV2:
                     trailing = True
 
             if not be and risk > 0 and best >= risk * be_trigger:
-                cur_stop = sig.entry
+                cur_stop = entry
                 be = True
                 trade.moved_be = True
 
