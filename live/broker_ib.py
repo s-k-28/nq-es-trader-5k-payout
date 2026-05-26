@@ -279,8 +279,8 @@ class IBBroker:
         self.cancel_all_exit_orders()
         last_trade = None
         for attempt in range(3):
-            pos_size = self.position_size()
-            if pos_size == 0:
+            pos = self.get_position()
+            if not pos or pos['size'] == 0:
                 log.info("Position flattened and verified.")
                 return True
             if last_trade is not None:
@@ -288,15 +288,17 @@ class IBBroker:
                 if status not in ('Filled', 'Cancelled', 'Inactive'):
                     self.ib.cancelOrder(last_trade.order)
                     self.ib.sleep(1)
-            action = 'SELL' if pos_size > 0 else 'BUY'
-            order = MarketOrder(action, abs(pos_size))
+            action = 'SELL' if pos['side'] == 'long' else 'BUY'
+            order = MarketOrder(action, pos['size'])
+            order.tif = 'DAY'
             last_trade = self.ib.placeOrder(self.contract, order)
+            log.info(f"Flatten {action} {pos['size']} MNQ (attempt {attempt+1})")
             self.ib.sleep(2)
-            remaining = self.position_size()
-            if remaining == 0:
+            remaining = self.get_position()
+            if not remaining or remaining['size'] == 0:
                 log.info("Position flattened and verified.")
                 return True
-            log.warning(f"Flatten sent but {remaining} contracts remain (attempt {attempt+1})")
+            log.warning(f"Flatten sent but {remaining['size']} {remaining['side']} remain (attempt {attempt+1})")
         log.error("FLATTEN VERIFICATION FAILED — POSITION MAY BE OPEN")
         return False
 
