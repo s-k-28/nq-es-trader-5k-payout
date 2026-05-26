@@ -123,5 +123,84 @@ class TelegramAlerts:
             f"Reason: {reason}"
         )
 
+    def signal_generated(self, model: str, direction: str, entry: float,
+                        stop: float, target: float, rr: float, risk_ticks: float):
+        arrow = "\U0001F7E1" if direction == 'long' else "\U0001F7E0"
+        self._send(
+            f"{arrow} <b>SIGNAL</b>\n"
+            f"Model: <code>{model}</code>\n"
+            f"Direction: {direction.upper()}\n"
+            f"Entry: {entry:.2f} | Stop: {stop:.2f} | Target: {target:.2f}\n"
+            f"RR: {rr:.1f} | Risk: {risk_ticks:.0f} ticks"
+        )
+
+    def entry_pending(self, model: str, direction: str, qty: int,
+                      entry_price: float):
+        self._send(
+            f"\U0001F4CB <b>ORDER PLACED</b>\n"
+            f"Model: <code>{model}</code>\n"
+            f"{direction.upper()} {qty} MNQ limit @ {entry_price:.2f}\n"
+            f"Waiting for fill..."
+        )
+
+    def stop_moved_be(self, model: str, price: float):
+        self._send(
+            f"\U0001F6E1 <b>STOP → BREAKEVEN</b>\n"
+            f"Model: <code>{model}</code>\n"
+            f"Stop moved to {price:.2f}"
+        )
+
+    def trailing_stop_moved(self, model: str, old_price: float, new_price: float):
+        self._send(
+            f"\U0001F4C8 <b>TRAIL STOP</b>\n"
+            f"Model: <code>{model}</code>\n"
+            f"Stop: {old_price:.2f} → {new_price:.2f}"
+        )
+
+    def signal_skipped(self, model: str, reason: str):
+        self._send(
+            f"\U0001F6AB <b>SIGNAL SKIPPED</b>\n"
+            f"Model: <code>{model}</code>\n"
+            f"Reason: {reason}"
+        )
+
+    def entry_cancelled(self, model: str, reason: str):
+        self._send(
+            f"⏏ <b>ENTRY CANCELLED</b>\n"
+            f"Model: <code>{model}</code>\n"
+            f"Reason: {reason}"
+        )
+
+    def orphan_detected(self, size: int, action: str):
+        self._send(
+            f"\U0001F6A8 <b>ORPHAN POSITION</b>\n"
+            f"Found {size} contracts at startup\n"
+            f"Action: {action}"
+        )
+
+    def new_day(self, date: str, balance: float, pnl: float,
+                green_days: int, total_days: int):
+        self._send(
+            f"\U0001F305 <b>NEW SESSION</b>\n"
+            f"Date: {date}\n"
+            f"Balance: ${balance:,.0f}\n"
+            f"Total P&L: ${pnl:+,.0f}\n"
+            f"Green days: {green_days}/{total_days}"
+        )
+
+    def consec_loss_cooldown(self, losses: int, cooldown: int):
+        self._send(
+            f"\U0001F9CA <b>COOLDOWN</b>\n"
+            f"Consecutive losses: {losses}/{cooldown}\n"
+            f"Skipping next signal, then resetting."
+        )
+
+    def bot_halted(self, reason: str):
+        self._send(
+            f"\U0001F6D1 <b>BOT HALTED</b>\n"
+            f"Reason: {reason}\n"
+            f"Manual intervention required."
+        )
+
     def error(self, msg: str):
         self._send(f"❗ <b>ERROR</b>\n{msg}")

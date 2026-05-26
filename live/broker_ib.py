@@ -215,12 +215,18 @@ class IBBroker:
         stop_trade = self.ib.placeOrder(self.contract, stop_order)
         self._stop_order_id = stop_trade.order.orderId
 
-        target_order = LimitOrder(exit_action, qty, self._round(target_price))
-        target_order.tif = 'GTC'
-        target_order.ocaGroup = oca_group
-        target_order.ocaType = 1
-        target_trade = self.ib.placeOrder(self.contract, target_order)
-        self._target_order_id = target_trade.order.orderId
+        try:
+            target_order = LimitOrder(exit_action, qty, self._round(target_price))
+            target_order.tif = 'GTC'
+            target_order.ocaGroup = oca_group
+            target_order.ocaType = 1
+            target_trade = self.ib.placeOrder(self.contract, target_order)
+            self._target_order_id = target_trade.order.orderId
+        except Exception as e:
+            log.error(f"Target order failed: {e} — cancelling stop to avoid naked order")
+            self.cancel_order(self._stop_order_id)
+            self._stop_order_id = None
+            raise
 
         log.info(f"Exit bracket — stop: {stop_price:.2f} (#{self._stop_order_id})"
                  f" target: {target_price:.2f} (#{self._target_order_id})"
@@ -285,15 +291,27 @@ class IBBroker:
                 return True
             if last_trade is not None:
                 status = last_trade.orderStatus.status
-                if status not in ('Filled', 'Cancelled', 'Inactive'):
+                if status == 'Filled':
+                    try:
+                        self.ib.sleep(1)
+                    except KeyboardInterrupt:
+                        log.critical("Ctrl+C during flatten — checking position")
+                    continue
+                if status not in ('Cancelled', 'Inactive', 'ApiCancelled'):
                     self.ib.cancelOrder(last_trade.order)
-                    self.ib.sleep(1)
+                    try:
+                        self.ib.sleep(2)
+                    except KeyboardInterrupt:
+                        log.critical("Ctrl+C during flatten cancel wait")
             action = 'SELL' if pos['side'] == 'long' else 'BUY'
             order = MarketOrder(action, pos['size'])
             order.tif = 'DAY'
             last_trade = self.ib.placeOrder(self.contract, order)
             log.info(f"Flatten {action} {pos['size']} MNQ (attempt {attempt+1})")
-            self.ib.sleep(2)
+            try:
+                self.ib.sleep(3)
+            except KeyboardInterrupt:
+                log.critical("Ctrl+C during flatten sleep — order submitted, checking position")
             remaining = self.get_position()
             if not remaining or remaining['size'] == 0:
                 log.info("Position flattened and verified.")
@@ -307,11 +325,12 @@ class IBBroker:
         for pos in self.ib.positions():
             if pos.contract.conId == self.contract_id:
                 if pos.position != 0:
+                    multiplier = float(self.contract.multiplier) if self.contract and self.contract.multiplier else 2.0
                     return {
                         'contractId': self.contract_id,
                         'size': abs(int(pos.position)),
                         'side': 'long' if pos.position > 0 else 'short',
-                        'avgPrice': pos.avgCost / 2.0 if pos.avgCost else 0,
+                        'avgPrice': pos.avgCost / multiplier if pos.avgCost else 0,
                     }
         return None
 

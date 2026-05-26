@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import time
 from datetime import datetime, time as dt_time
 from pathlib import Path
@@ -234,8 +235,10 @@ class LiveExecutor:
             log.warning(f"ORPHAN POSITION DETECTED: {pos_size} contracts open at startup")
             if self.shadow:
                 log.info("Shadow mode — not flattening orphan position")
+                self.alerts.orphan_detected(pos_size, "shadow mode — not flattening")
                 return
             log.info("Flattening orphan position for safety")
+            self.alerts.orphan_detected(pos_size, "flattening for safety")
             self._log_decision({
                 'action': 'flatten_orphan',
                 'reason': f'Found {pos_size} open contracts at startup',
@@ -324,6 +327,7 @@ class LiveExecutor:
         log.info(f"DD floor: ${floor:,.0f} ({'STATIC' if static else 'trailing'}) | "
                  f"Cushion: ${cushion:,.0f} | DD: ${dd:,.0f}")
         log.info(f"Green days: {self.green_days} | Trading days: {self.total_days}")
+        self.alerts.new_day(str(today), bal, pnl, self.green_days, self.total_days)
 
         if cushion < 1000 and cushion > 0:
             self.alerts.dd_warning(bal, self.peak_balance, dd, self.cfg.funded.trailing_dd)
@@ -382,6 +386,7 @@ class LiveExecutor:
                 'action': 'skip_signal', 'reason': 'consec_loss_cooldown',
                 'consec_losses': self.consec_losses, 'cooldown': self.consec_cooldown,
             })
+            self.alerts.consec_loss_cooldown(self.consec_losses, self.consec_cooldown)
             self.consec_losses = 0
             return
 
@@ -503,6 +508,9 @@ class LiveExecutor:
         log.info(f"    Stop: {sig.stop:.2f} | Target: {sig.target:.2f} | "
                  f"RR: {sig.rr:.1f} | Risk: {sig.risk_ticks:.0f} ticks | "
                  f"Max loss: ${potential_loss:,.0f}")
+        self.alerts.signal_generated(
+            sig.model, sig.direction, sig.entry,
+            sig.stop, sig.target, sig.rr, sig.risk_ticks)
 
         actual_risk_ticks = abs(sig.entry - sig.stop) / TICK_SIZE
         stop_price = sig.stop
@@ -586,6 +594,7 @@ class LiveExecutor:
             self.daily_model_count.get(model_key, 0) + 1
 
         log.info(f"    PENDING -- {qty} MNQ limit @ {sig.entry:.2f}")
+        self.alerts.entry_pending(sig.model, sig.direction, qty, sig.entry)
 
     def _manage_trade(self):
         t = self.trade
@@ -648,6 +657,8 @@ class LiveExecutor:
                             if not self.broker.modify_stop(t.stop_price):
                                 log.warning(f"    Trail stop advance FAILED, reverting stop {t.stop_price} → {prev_stop}")
                                 t.stop_price = prev_stop
+                            else:
+                                self.alerts.trailing_stop_moved(t.signal.model, prev_stop, t.stop_price)
                 else:
                     new_stop = t.entry_price - t.mfe + trail_dist
                     if new_stop < t.stop_price:
@@ -657,6 +668,8 @@ class LiveExecutor:
                             if not self.broker.modify_stop(t.stop_price):
                                 log.warning(f"    Trail stop advance FAILED, reverting stop {t.stop_price} → {prev_stop}")
                                 t.stop_price = prev_stop
+                            else:
+                                self.alerts.trailing_stop_moved(t.signal.model, prev_stop, t.stop_price)
 
         if not t.partial_taken and t.risk > 0 and best >= t.risk * partial_rr:
             t.partial_taken = True
@@ -677,6 +690,7 @@ class LiveExecutor:
                     t.stop_price = prev_stop
             if t.moved_be:
                 log.info(f"    Moved stop to BREAKEVEN @ {t.entry_price:.2f}")
+                self.alerts.stop_moved_be(t.signal.model, t.entry_price)
 
         elapsed = (datetime.now(CT) - t.entry_time).total_seconds() / 60
         if elapsed >= time_stop_min and not t.moved_be:
@@ -698,6 +712,7 @@ class LiveExecutor:
                            ORD_EXPIRED: 'EXPIRED'}
             reason = status_name.get(status, 'REMOVED')
             log.info(f"    ENTRY {reason} -- resetting")
+            self.alerts.entry_cancelled(t.signal.model, reason)
             self._log_decision({
                 'action': 'entry_rejected', 'reason': reason.lower(),
                 'model': t.signal.model, 'order_id': entry_id,
@@ -802,7 +817,13 @@ class LiveExecutor:
                     log.error(f"    Bracket after timeout fill FAILED: {e} — flattening")
                     self.alerts.error(
                         f"TIMEOUT FILL: {t.signal.model} filled but bracket failed. Flattening.")
-                    self.broker.flatten()
+                    if not self.broker.flatten():
+                        self.alerts.error(
+                            "EMERGENCY: Flatten failed after timeout fill. Position NAKED. "
+                            "Manual intervention required IMMEDIATELY.")
+                        self._emergency_close_record(t, 'flatten_failed_timeout')
+                        self._halt('flatten_failed_timeout_fill')
+                        return
                     self._reset_trade()
                     return
 
@@ -815,6 +836,7 @@ class LiveExecutor:
         self.halted = True
         self._reset_trade()
         self._log_decision({'action': 'bot_halted', 'reason': reason})
+        self.alerts.bot_halted(reason)
         log.critical(f"BOT HALTED: {reason}")
 
     def _emergency_close_record(self, t: LiveTrade, reason: str):
@@ -941,6 +963,16 @@ class LiveExecutor:
 
         if t.pending:
             self.broker.cancel_order(t.order_ids.get('entry'))
+            time.sleep(0.5)
+            pos = self.broker.get_position()
+            if pos and pos['size'] > 0:
+                log.warning(f"    Cancel-on-pending but position found — {pos['size']} {pos['side']}, flattening")
+                self.alerts.error(f"Entry filled during cancel ({reason}). Flattening {pos['size']} {pos['side']}.")
+                if not self.broker.flatten():
+                    self.alerts.error("EMERGENCY: Flatten failed after pending cancel. MANUAL CLOSE REQUIRED.")
+                    self._emergency_close_record(t, f'flatten_failed_{reason}')
+                    self._halt(f'flatten_failed_{reason}')
+                    return
             self._log_decision({
                 'action': 'pending_cancelled', 'reason': reason,
                 'model': t.signal.model,
@@ -1019,34 +1051,45 @@ class LiveExecutor:
         self._reset_trade()
 
     def shutdown(self):
-        if self.trade:
-            if self.trade.pending:
-                log.info("Shutdown -- cancelling pending entry")
-                self.broker.cancel_order(self.trade.order_ids.get('entry'))
-            else:
-                log.info("Shutdown -- flattening open position")
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        log.info("Shutdown initiated — Ctrl+C disabled until complete")
+        try:
+            if self.trade:
+                if self.trade.pending:
+                    log.info("Shutdown -- cancelling pending entry")
+                    self.broker.cancel_order(self.trade.order_ids.get('entry'))
+                    time.sleep(1)
+                    pos = self.broker.get_position()
+                    if pos and pos['size'] > 0:
+                        log.warning(f"Shutdown: pending entry already filled — {pos['size']} {pos['side']}, flattening")
+                        self.alerts.error(f"Shutdown: entry filled during cancel — flattening {pos['size']} {pos['side']}")
+                        if not self.broker.flatten():
+                            log.critical("EMERGENCY: Shutdown flatten of filled-pending FAILED")
+                            self.alerts.error("EMERGENCY: Shutdown flatten failed after pending cancel. MANUAL CLOSE REQUIRED.")
+                else:
+                    log.info("Shutdown -- flattening open position")
+                    if not self.broker.flatten():
+                        log.critical("EMERGENCY: Shutdown flatten FAILED — position may be NAKED")
+                        self.alerts.error(
+                            "EMERGENCY: Shutdown flatten failed. Position may remain open. "
+                            "Manual intervention required IMMEDIATELY.")
+                self._reset_trade()
+                self.halted = True
+
+            pos = self.broker.position_size()
+            if pos > 0:
+                log.warning(f"Shutdown -- still have {pos} contracts, force flatten")
                 if not self.broker.flatten():
-                    log.critical("EMERGENCY: Shutdown flatten FAILED — position may be NAKED")
+                    log.critical("EMERGENCY: Shutdown force flatten FAILED — position is NAKED")
                     self.alerts.error(
-                        "EMERGENCY: Shutdown flatten failed. Position may remain open. "
+                        f"EMERGENCY: Shutdown force flatten failed. {pos} contracts may remain open. "
                         "Manual intervention required IMMEDIATELY.")
-            self._reset_trade()
-            self.halted = True
-
-        pos = self.broker.position_size()
-        if pos > 0:
-            log.warning(f"Shutdown -- still have {pos} contracts, force flatten")
-            if not self.broker.flatten():
-                log.critical("EMERGENCY: Shutdown force flatten FAILED — position is NAKED")
-                self.alerts.error(
-                    f"EMERGENCY: Shutdown force flatten failed. {pos} contracts may remain open. "
-                    "Manual intervention required IMMEDIATELY.")
-
-        self.guard.save_state(ADAPTIVE_STATE)
-        self.guard.save_journal(ADAPTIVE_JOURNAL)
-        self.alerts.bot_stopped("shutdown")
-        self._log_decision({'action': 'shutdown', 'reason': 'user_requested'})
-        log.info("Executor shutdown complete.")
+        finally:
+            self.guard.save_state(ADAPTIVE_STATE)
+            self.guard.save_journal(ADAPTIVE_JOURNAL)
+            self.alerts.bot_stopped("shutdown")
+            self._log_decision({'action': 'shutdown', 'reason': 'user_requested'})
+            log.info("Executor shutdown complete.")
 
     def _current_atr(self) -> float:
         if self.buf.empty or len(self.buf) < 15:
