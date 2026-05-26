@@ -552,27 +552,59 @@ Get real-time trade notifications on your phone:
 3. Search **@userinfobot**, send `/start`, copy your **chat ID**
 4. Add both values to `.env`
 
-**Alerts you'll receive:**
-- Bot started / stopped
-- Every trade entry (model, direction, price, contracts, risk)
-- Every trade exit (R-multiple, P&L, reason)
-- Daily summary (trades, wins, daily R, daily P&L)
-- Win cap hit (stop signal — bot is done for the day)
-- Dollar loss cap warning
-- Drawdown proximity alerts (when cushion < $1,000)
+**Alerts you'll receive (every event is notified):**
+
+| Event | Alert | Description |
+|:--|:--|:--|
+| Bot started | BOT STARTED | Balance, model count |
+| Bot stopped | BOT STOPPED | Reason (shutdown/crash) |
+| New session | NEW SESSION | Date, balance, P&L, green days |
+| Signal detected | SIGNAL | Model, direction, entry/stop/target, RR, risk ticks |
+| Order placed | ORDER PLACED | Limit order submitted, waiting for fill |
+| Entry filled | NEW TRADE | Model, direction, price, contracts, risk tier |
+| Entry cancelled | ENTRY CANCELLED | Order rejected/expired/cancelled by broker |
+| Stop to breakeven | STOP BREAKEVEN | Model, new stop price |
+| Trailing stop moved | TRAIL STOP | Model, old price, new price |
+| Trade closed | TRADE CLOSED | R-multiple, P&L, reason, daily totals |
+| End of day | END OF DAY | Trade count, win rate, daily R and P&L |
+| Win cap hit | WIN CAP HIT | Daily R reached cap, done for day |
+| Dollar loss cap | DLC BREACHED | Daily P&L exceeded loss limit |
+| Drawdown warning | DRAWDOWN ALERT | Balance, peak, DD amount and percentage |
+| Consec loss cooldown | COOLDOWN | Loss count, skipping next signal |
+| Orphan position | ORPHAN POSITION | Contracts found at startup, action taken |
+| Bot halted | BOT HALTED | Reason, manual intervention required |
+| Any error/emergency | ERROR | Flatten failures, bracket failures, etc. |
 
 ### Stopping the Bot
 
 Press `Ctrl+C`. The shutdown handler will:
-1. Cancel any pending entry orders
-2. Flatten any open position (3 attempts with verification)
-3. Save adaptive guard state
-4. Send "bot stopped" Telegram alert
-5. Write final decision log entry
+1. **Block further Ctrl+C** (SIGINT ignored during shutdown to prevent partial cleanup)
+2. Cancel any pending entry orders, then check if the entry was already filled (race condition protection)
+3. Flatten any open position using direction-aware close (BUY to close shorts, SELL to close longs)
+4. Verify position is flat; retry up to 3 times with increasing wait times
+5. Save adaptive guard state and journal
+6. Send "bot stopped" Telegram alert
+7. Write final decision log entry
+
+**Safety features in flatten():**
+- Uses `get_position()` to determine long vs short direction (never assumes)
+- Catches `KeyboardInterrupt` during IB sleep calls so the order still completes
+- Checks if previous flatten order already filled before sending another (prevents double-flatten)
+- Sets explicit TIF=DAY on market orders to avoid IB Error 10349
+- OCA exit brackets: if target order fails, stop is cancelled to prevent naked orders
+
+**Emergency close utility** — if the bot exits uncleanly and leaves an open position:
+
+```bash
+python3 close_position.py --port 4002   # paper
+python3 close_position.py --port 4001   # live
+```
+
+Connects with a separate client ID, reads all MNQ positions, and sends market orders to close them.
 
 If the process crashes (power loss, SSH disconnect), on restart it will:
-- Detect any orphan positions and flatten them
-- Reconstruct daily P&L state from broker history
+- Detect any orphan positions and flatten them (with Telegram alert)
+- Reconstruct daily P&L state from decision log
 - Resume normal operation
 
 ### Live Executor Architecture
@@ -580,13 +612,17 @@ If the process crashes (power loss, SSH disconnect), on restart it will:
 The live executor (`live/executor_multi.py`) implements:
 
 - **Limit entry orders** with 60-second timeout (auto-cancel if not filled)
-- **Bracket exits** (stop + target placed immediately after fill confirmation)
-- **Trailing stop advancement** via broker stop modification (reverts on failure)
+- **Entry timeout race protection** — if cancel arrives after fill, detects the position and places protective bracket
+- **Bracket exits** with OCA groups (stop + target placed atomically; if target fails, stop is cancelled)
+- **Trailing stop advancement** via broker stop modification (reverts on failure, alerts on success)
 - **Breakeven move** at 0.6R with retry on failure
-- **Session flatten** at 3:55 PM ET (5 minutes before close)
-- **Orphan position detection** on startup
-- **Mid-session restart** with state reconstruction from broker
+- **Session flatten** at 3:55 PM ET with pending-cancel race protection
+- **Direction-aware flatten** — uses position side (long/short) to determine correct close action
+- **Ctrl+C safe shutdown** — SIGINT blocked during flatten, KeyboardInterrupt caught during IB sleeps
+- **Orphan position detection** on startup with Telegram alert
+- **Mid-session restart** with state reconstruction from decision log
 - **Adaptive guard** for regime-aware position sizing
+- **Comprehensive Telegram alerts** for every event (18 alert types)
 - **Decision logging** with fsync for crash forensics (`live/state/decisions.jsonl`)
 
 ### Adaptive Guard (Live Only)
@@ -620,8 +656,13 @@ State is saved to `live/state/adaptive.json` and persists across restarts. All g
 | `Rate limited (429)` | Automatic retry with exponential backoff (2s, 4s, 8s, 16s) |
 | `Connection refused` (IB) | IB Gateway not running or wrong port. Check API settings. |
 | `Could not qualify MNQ` (IB) | Market data subscription needed for CME futures |
-| Bot stops generating signals | Check if daily win cap (2.0R) or DLC ($1,000) was hit |
-| `FLATTEN VERIFICATION FAILED` | **CRITICAL** — manual intervention required, check broker platform |
+| `Error 321: Missing order exchange` (IB) | Contract needs exchange set — fixed in `close_position.py`, auto-handled in broker |
+| `Error 10349: Missing TIF` (IB) | Orders need explicit TIF — already fixed (DAY on entries, GTC on exits) |
+| `Error 201: Insufficient margin` (IB) | Position too large for account. Use `close_position.py` to flatten. |
+| Bot stops generating signals | Check if daily win cap (2.0R) or DLC ($1,000) was hit (Telegram will notify) |
+| `FLATTEN VERIFICATION FAILED` | **CRITICAL** — run `python3 close_position.py --port 4002` immediately |
+| `BOT HALTED` Telegram alert | Bot stopped itself due to safety issue. Check logs, fix, restart. |
+| No Telegram notifications | Verify `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`. Test with `python3 -c "from live.alerts import TelegramAlerts; t = TelegramAlerts(); t._send('test')"` |
 
 ---
 
@@ -633,6 +674,7 @@ nq-es-trader-5k-payout/
 ├── run_multi.py                       Backtest runner with per-model reporting
 ├── run_live.py                        Live bot entry point (TopStepX 100K)
 ├── run_paper.py                       Paper trading simulator (no account needed)
+├── close_position.py                  Emergency position closer (connects to IB, flattens all MNQ)
 │
 ├── strategy/
 │   ├── multi.py                       Signal orchestrator: generate, filter, resolve
