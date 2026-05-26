@@ -4,10 +4,16 @@ Implements the same interface as TopStepBroker so executor_multi works unchanged
 Uses ib_insync for async IB API communication.
 """
 from __future__ import annotations
+import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 
 import pandas as pd
 from ib_insync import IB, Contract, MarketOrder, LimitOrder, StopOrder, util
@@ -190,6 +196,7 @@ class IBBroker:
                           entry_price: float) -> int:
         action = 'BUY' if direction == 'long' else 'SELL'
         order = LimitOrder(action, qty, self._round(entry_price))
+        order.tif = 'DAY'
         trade = self.ib.placeOrder(self.contract, order)
         self._entry_order_id = trade.order.orderId
         log.info(f"Entry LIMIT {direction.upper()} {qty} @ {entry_price:.2f} "
@@ -199,17 +206,25 @@ class IBBroker:
     def place_exit_bracket(self, direction: str, qty: int,
                            stop_price: float, target_price: float) -> dict:
         exit_action = 'SELL' if direction == 'long' else 'BUY'
+        oca_group = f"exit_{int(time.time())}_{qty}"
 
         stop_order = StopOrder(exit_action, qty, self._round(stop_price))
+        stop_order.tif = 'GTC'
+        stop_order.ocaGroup = oca_group
+        stop_order.ocaType = 1
         stop_trade = self.ib.placeOrder(self.contract, stop_order)
         self._stop_order_id = stop_trade.order.orderId
 
         target_order = LimitOrder(exit_action, qty, self._round(target_price))
+        target_order.tif = 'GTC'
+        target_order.ocaGroup = oca_group
+        target_order.ocaType = 1
         target_trade = self.ib.placeOrder(self.contract, target_order)
         self._target_order_id = target_trade.order.orderId
 
         log.info(f"Exit bracket — stop: {stop_price:.2f} (#{self._stop_order_id})"
-                 f" target: {target_price:.2f} (#{self._target_order_id})")
+                 f" target: {target_price:.2f} (#{self._target_order_id})"
+                 f" OCA: {oca_group}")
         return {
             'stop': self._stop_order_id,
             'target': self._target_order_id,
@@ -230,20 +245,16 @@ class IBBroker:
     def get_order_status(self, order_id: int) -> int | None:
         if not order_id:
             return None
-        self.ib.sleep(0.1)
+        self.ib.sleep(0.2)
         for trade in self.ib.trades():
             if trade.order.orderId == order_id:
                 status = trade.orderStatus.status
                 mapped = _ib_status_to_int(status)
                 if mapped:
                     return mapped
-                if status in ('Submitted', 'PreSubmitted'):
+                if status in ('Submitted', 'PreSubmitted', 'PendingSubmit', 'PendingCancel'):
                     return 0
-                if self.position_size() > 0:
-                    return ORD_FILLED
-                return ORD_CANCELLED
-        if self.position_size() > 0:
-            return ORD_FILLED
+                return 0
         return ORD_CANCELLED
 
     def cancel_order(self, order_id: int):

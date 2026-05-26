@@ -45,6 +45,7 @@ MAX_CONTRACTS = 20
 MIN_RISK_TICKS = 40
 CT = ZoneInfo('America/Chicago')
 ENTRY_TIMEOUT_SEC = 60
+GLOBEX_MODE = os.getenv('GLOBEX_MODE', '').strip() == '1'
 STATE_DIR = 'live/state'
 ADAPTIVE_STATE = f'{STATE_DIR}/adaptive.json'
 ADAPTIVE_JOURNAL = f'{STATE_DIR}/journal.json'
@@ -254,20 +255,21 @@ class LiveExecutor:
         if today != self.cur_date:
             self._new_day(today)
 
-        if now.time() < dt_time(5, 0):
-            return
+        if not GLOBEX_MODE:
+            if now.time() < dt_time(5, 0):
+                return
 
-        if now.time() >= dt_time(15, 55):
-            if self.trade:
-                log.info("Session close -- flattening")
-                self._close_trade('session_close')
-            if now.time() >= dt_time(16, 0) and now.time() < dt_time(16, 1):
-                trades_today = sum(self.daily_model_count.values())
-                wins = max(0, int(trades_today * (0.5 + self.daily_r / max(trades_today, 1) * 0.1))) if trades_today > 0 else 0
-                self.alerts.daily_summary(
-                    trades_today, wins, self.daily_r,
-                    self.daily_pnl_usd, self.consec_losses)
-            return
+            if now.time() >= dt_time(15, 55):
+                if self.trade:
+                    log.info("Session close -- flattening")
+                    self._close_trade('session_close')
+                if now.time() >= dt_time(16, 0) and now.time() < dt_time(16, 1):
+                    trades_today = sum(self.daily_model_count.values())
+                    wins = max(0, int(trades_today * (0.5 + self.daily_r / max(trades_today, 1) * 0.1))) if trades_today > 0 else 0
+                    self.alerts.daily_summary(
+                        trades_today, wins, self.daily_r,
+                        self.daily_pnl_usd, self.consec_losses)
+                return
 
         if self.halted:
             return
@@ -349,7 +351,7 @@ class LiveExecutor:
 
     def _check_signals(self):
         now = datetime.now(CT)
-        if now.time() >= dt_time(15, 45):
+        if not GLOBEX_MODE and now.time() >= dt_time(15, 45):
             return
 
         if self.daily_r >= self.daily_win_cap:
@@ -400,12 +402,12 @@ class LiveExecutor:
 
         now = datetime.now(CT)
         sig_age = (now - sig.ts.to_pydatetime().replace(tzinfo=CT)).total_seconds()
-        if sig_age > 120:
-            log.info(f"SKIP -- Stale signal: [{sig.model}] {sig.direction} age={sig_age:.0f}s > 120s")
+        if sig_age > 1800:
+            log.info(f"SKIP -- Stale signal: [{sig.model}] {sig.direction} age={sig_age:.0f}s > 1800s")
             self._log_decision({
                 'action': 'skip_signal', 'reason': 'stale_signal',
                 'model': sig.model, 'direction': sig.direction,
-                'signal_age_sec': round(sig_age, 1), 'max_age_sec': 120,
+                'signal_age_sec': round(sig_age, 1), 'max_age_sec': 1800,
                 'signal_ts': str(sig.ts),
             })
             return
@@ -682,7 +684,7 @@ class LiveExecutor:
             self._close_trade('time_stop')
             return
 
-        if datetime.now(CT).time() >= dt_time(15, 55):
+        if not GLOBEX_MODE and datetime.now(CT).time() >= dt_time(15, 55):
             log.info("    SESSION CLOSE")
             self._close_trade('session_close')
 
@@ -769,6 +771,41 @@ class LiveExecutor:
                 'elapsed_sec': round(elapsed, 1),
             })
             self.broker.cancel_order(entry_id)
+            time.sleep(1)
+
+            pos = self.broker.get_position()
+            if pos and pos['size'] > 0:
+                log.warning(f"    TIMEOUT but FILLED — {pos['size']} {pos['side']} detected, placing bracket")
+                t.pending = False
+                t.contracts = pos['size']
+                t.entry_time = datetime.now(CT)
+                try:
+                    exit_ids = self.broker.place_exit_bracket(
+                        direction=t.direction,
+                        qty=t.contracts,
+                        stop_price=t.stop_price,
+                        target_price=t.target_price,
+                    )
+                    t.order_ids.update(exit_ids)
+                    model_risk = self.cfg.funded.model_risk_dollars.get(t.signal.model, 400)
+                    self.alerts.trade_entry(
+                        t.signal.model, t.direction, t.entry_price,
+                        t.stop_price, t.target_price, t.contracts,
+                        t.signal.risk_ticks, model_risk)
+                    self._log_decision({
+                        'action': 'timeout_fill_recovered',
+                        'model': t.signal.model, 'position_size': pos['size'],
+                        'direction': pos['side'],
+                    })
+                    return
+                except Exception as e:
+                    log.error(f"    Bracket after timeout fill FAILED: {e} — flattening")
+                    self.alerts.error(
+                        f"TIMEOUT FILL: {t.signal.model} filled but bracket failed. Flattening.")
+                    self.broker.flatten()
+                    self._reset_trade()
+                    return
+
             self._reset_trade()
 
     def _reset_trade(self):
