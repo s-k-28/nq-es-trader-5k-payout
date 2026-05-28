@@ -64,6 +64,8 @@ def _make_executor(cfg=None, shadow=False, position_size=0, tmp_path=None):
     broker.cancel_order = MagicMock()
     broker.cancel_all_exit_orders = MagicMock()
     broker.place_limit_entry = MagicMock(return_value=9001)
+    broker.place_bracket_entry = MagicMock(return_value={
+        'entry': 9001, 'stop': 9002, 'target': 9003, 'attached': True})
     broker.place_exit_bracket = MagicMock(return_value={'stop': 9002, 'target': 9003})
     broker.modify_stop = MagicMock()
     broker.get_order_status = MagicMock(return_value=ORD_FILLED)
@@ -82,7 +84,12 @@ def _make_executor(cfg=None, shadow=False, position_size=0, tmp_path=None):
     exe.start_balance = 100000.0
     exe.peak_balance = 100000.0
     if tmp_path:
+        # Redirect ALL state paths into tmp so tests never touch live state
+        # (adaptive guard learning, autopsy, decision log, journal).
         em.DECISION_LOG = str(tmp_path / 'decisions.jsonl')
+        em.ADAPTIVE_STATE = str(tmp_path / 'adaptive.json')
+        em.AUTOPSY_STATE = str(tmp_path / 'autopsy.json')
+        em.ADAPTIVE_JOURNAL = str(tmp_path / 'journal.json')
     return exe
 
 
@@ -821,3 +828,169 @@ class TestShutdownSafety:
         )
         exe._reset_trade()
         assert exe.trade is None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 18. ATOMIC BRACKET ENTRY  (no unprotected window)
+# ═══════════════════════════════════════════════════════════════════
+
+def _enter_signal(exe, sig, now_ct=None):
+    """Drive _enter_trade with guard/analyzer mocked clear."""
+    if now_ct is None:
+        now_ct = datetime(2025, 5, 9, 10, 0, 30, tzinfo=em.CT)
+    exe.guard = MagicMock()
+    exe.guard.pre_entry_check.return_value = (1.0, [])
+    exe.analyzer = MagicMock()
+    exe.analyzer.should_block_regime.return_value = (False, '')
+    exe.analyzer.get_recent_failure_pattern.return_value = None
+    with patch('live.executor_multi.datetime') as mock_dt:
+        mock_dt.now.return_value = now_ct
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        exe._enter_trade(sig)
+
+
+class TestAtomicBracketEntry:
+    def test_entry_places_atomic_bracket(self, tmp_path):
+        """Entry must submit stop+target atomically — no naked-position window."""
+        exe = _make_executor(tmp_path=tmp_path)
+        sig = make_signal(model='ou_rev', entry=20000.0, stop=19950.0,
+                          target=20150.0)
+        _enter_signal(exe, sig)
+
+        exe.broker.place_bracket_entry.assert_called_once()
+        assert exe.trade is not None
+        # The protective stop exists the instant the position can fill.
+        assert exe.trade.order_ids.get('stop') == 9002
+        assert exe.trade.order_ids.get('target') == 9003
+        assert exe.trade.bracket_attached is True
+        assert exe.trade.pending is True
+        # Legacy lone-limit path must NOT be used.
+        exe.broker.place_limit_entry.assert_not_called()
+
+    def test_atomic_fill_does_not_replace_bracket(self, tmp_path):
+        """On fill, an attached bracket is already live — don't place it again."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.broker.get_order_status.return_value = ORD_FILLED
+        sig = make_signal()
+        exe.trade = LiveTrade(
+            signal=sig, direction='long', entry_price=20000.0,
+            stop_price=19950.0, target_price=20150.0, risk=50.0,
+            entry_time=datetime.now(), contracts=3,
+            order_ids={'entry': 9001, 'stop': 9002, 'target': 9003},
+            pending=True, bracket_attached=True,
+        )
+        exe._check_entry_fill()
+        exe.broker.place_exit_bracket.assert_not_called()
+        assert exe.trade is not None
+        assert exe.trade.pending is False
+        assert exe.trade.order_ids['stop'] == 9002
+
+    def test_atomic_incomplete_bracket_halts(self, tmp_path):
+        """If the atomic bracket comes back without a stop, flatten + halt."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.broker.place_bracket_entry.return_value = {
+            'entry': 9001, 'stop': None, 'target': 9003, 'attached': True}
+        sig = make_signal(model='ou_rev')
+        _enter_signal(exe, sig)
+        exe.broker.flatten.assert_called()
+        assert exe.halted is True
+        assert exe.trade is None
+
+    def test_pending_cancel_cancels_attached_children(self, tmp_path):
+        """A cancelled entry with an attached bracket must cancel the children."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.broker.get_order_status.return_value = ORD_CANCELLED
+        sig = make_signal()
+        exe.trade = LiveTrade(
+            signal=sig, direction='long', entry_price=20000.0,
+            stop_price=19950.0, target_price=20150.0, risk=50.0,
+            entry_time=datetime.now(), contracts=3,
+            order_ids={'entry': 9001, 'stop': 9002, 'target': 9003},
+            pending=True, bracket_attached=True,
+        )
+        exe._check_entry_fill()
+        exe.broker.cancel_all_exit_orders.assert_called()
+        assert exe.trade is None
+
+    def test_deferred_broker_still_places_bracket_on_fill(self, tmp_path):
+        """Brokers without native brackets (attached=False) keep deferred path."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.broker.get_order_status.return_value = ORD_FILLED
+        exe.broker.place_exit_bracket.return_value = {'stop': 7002, 'target': 7003}
+        sig = make_signal()
+        exe.trade = LiveTrade(
+            signal=sig, direction='long', entry_price=20000.0,
+            stop_price=19950.0, target_price=20150.0, risk=50.0,
+            entry_time=datetime.now(), contracts=3,
+            order_ids={'entry': 9001}, pending=True, bracket_attached=False,
+        )
+        exe._check_entry_fill()
+        exe.broker.place_exit_bracket.assert_called_once()
+        assert exe.trade.order_ids['stop'] == 7002
+        assert exe.trade.pending is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 19. DLC HARD GUARD  (bound single-trade overrun)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestDlcHardGuard:
+    def test_hard_stop_force_flattens_on_overrun(self, tmp_path):
+        """Open loss past the per-trade hard cap force-flattens immediately."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.guard = MagicMock()
+        sig = make_signal(entry=20000.0, stop=19950.0, target=20150.0)
+        exe.trade = LiveTrade(
+            signal=sig, direction='long', entry_price=20000.0,
+            stop_price=19950.0, target_price=20150.0, risk=50.0,
+            entry_time=datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT),
+            contracts=3, order_ids={'entry': 9001, 'stop': 9002, 'target': 9003},
+            pending=False, bracket_attached=True, hard_loss_usd=300.0,
+        )
+        exe.broker.position_size.return_value = 3
+        exe.broker.get_exit_fill_price.return_value = None
+        # Drive price 100 pts against a long: open loss = 100*2*3 = $600 > $300 cap.
+        last = exe.buf.iloc[-1].copy()
+        last['low'] = 19900.0
+        last['close'] = 19900.0
+        last['high'] = 20000.0
+        exe.buf.iloc[-1] = last
+
+        now_ct = datetime(2025, 5, 9, 10, 5, 0, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            exe._manage_trade()
+
+        exe.broker.flatten.assert_called()
+        assert exe.trade is None
+        assert exe.daily_pnl_usd < 0
+
+    def test_hard_stop_not_triggered_within_cap(self, tmp_path):
+        """A normal adverse tick within the hard cap must NOT force-flatten."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.guard = MagicMock()
+        sig = make_signal(entry=20000.0, stop=19950.0, target=20150.0)
+        exe.trade = LiveTrade(
+            signal=sig, direction='long', entry_price=20000.0,
+            stop_price=19950.0, target_price=20150.0, risk=50.0,
+            entry_time=datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT),
+            contracts=3, order_ids={'entry': 9001, 'stop': 9002, 'target': 9003},
+            pending=False, bracket_attached=True, hard_loss_usd=300.0,
+        )
+        exe.broker.position_size.return_value = 3
+        # 20 pts against a long: open loss = 20*2*3 = $120 < $300 cap.
+        last = exe.buf.iloc[-1].copy()
+        last['low'] = 19980.0
+        last['close'] = 19990.0
+        last['high'] = 20000.0
+        exe.buf.iloc[-1] = last
+
+        now_ct = datetime(2025, 5, 9, 10, 5, 0, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            exe._manage_trade()
+
+        exe.broker.flatten.assert_not_called()
+        assert exe.trade is not None

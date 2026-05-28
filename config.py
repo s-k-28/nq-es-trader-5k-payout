@@ -78,6 +78,10 @@ class FundedAccountParams:
     green_day_protect: float = 250.0
     green_day_protect_scale: float = 0.5
     daily_win_cap_r: float = 3.0
+    # Hard per-trade loss backstop: force-flatten if a single trade's open loss
+    # exceeds intended_risk_dollars * this multiple (bounded by remaining DLC).
+    # Catches stop-market slippage / overruns that breach the assumed 1R risk.
+    per_trade_hard_stop_mult: float = 1.5
     post_static_scaling: list = field(default_factory=lambda: [
         (3000, 1.0), (0, 1.0),
     ])

@@ -72,6 +72,13 @@ class LiveTrade:
     trailing: bool = False
     mfe: float = 0.0
     partial_r_locked: float = 0.0
+    # True when stop+target were submitted atomically with the entry (native
+    # broker bracket) so the protective stop is live the instant the entry fills
+    # — eliminating the unprotected window. False = deferred (post-fill) bracket.
+    bracket_attached: bool = False
+    # Hard per-trade dollar loss backstop. If open loss exceeds this, the
+    # executor force-flattens — bounds slippage/overrun past the resting stop.
+    hard_loss_usd: float = 0.0
 
 
 class LiveExecutor:
@@ -105,6 +112,8 @@ class LiveExecutor:
         self.daily_profit_target = cfg.funded.daily_profit_target
         self.consec_cooldown = 10
         self.dollar_loss_cap = cfg.funded.dollar_loss_cap
+        self.per_trade_hard_stop_mult = getattr(
+            cfg.funded, 'per_trade_hard_stop_mult', 1.5)
 
         Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -602,11 +611,23 @@ class LiveExecutor:
                 self.daily_model_count.get(model_key, 0) + 1
             return
 
+        # Per-trade hard-loss backstop: bound a single trade's worst case so a
+        # stop overrun / slippage can't blow the daily loss cap. 1R ≤ this ≤ DLC.
+        risk_dollars = abs(sig.entry - stop_price) / TICK_SIZE * MNQ_TICK_VALUE * qty
+        dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
+        hard_loss_usd = min(risk_dollars * self.per_trade_hard_stop_mult,
+                            max(dlc_remaining, risk_dollars))
+
+        # Submit entry + protective stop + target atomically. With a native
+        # bracket the stop is live at the broker the instant the entry fills —
+        # there is no window where the position sits unprotected.
         try:
-            entry_id = self.broker.place_limit_entry(
+            ids = self.broker.place_bracket_entry(
                 direction=sig.direction,
                 qty=qty,
                 entry_price=sig.entry,
+                stop_price=stop_price,
+                target_price=sig.target,
             )
         except Exception as e:
             log.exception("Order placement failed")
@@ -616,6 +637,7 @@ class LiveExecutor:
             })
             return
 
+        entry_id = ids.get('entry') if isinstance(ids, dict) else ids
         if not entry_id:
             log.error("Order placement returned no order ID")
             self._log_decision({
@@ -623,6 +645,29 @@ class LiveExecutor:
                 'model': sig.model,
             })
             return
+
+        attached = bool(ids.get('attached')) if isinstance(ids, dict) else False
+        order_ids = {'entry': entry_id}
+        if attached:
+            stop_id = ids.get('stop')
+            target_id = ids.get('target')
+            if not stop_id or not target_id:
+                # Atomic bracket came back incomplete — the entry may be live
+                # with no protection. Flatten and halt rather than run naked.
+                log.error("Atomic bracket incomplete — flattening and halting")
+                self._log_decision({
+                    'action': 'bracket_incomplete',
+                    'reason': 'atomic_missing_order_ids',
+                    'model': sig.model, 'ids': ids,
+                })
+                if not self.broker.flatten():
+                    self.alerts.error(
+                        "EMERGENCY: Flatten failed after incomplete atomic bracket. "
+                        "Position may be open with NO stop. Manual intervention required.")
+                self._halt('atomic_bracket_incomplete')
+                return
+            order_ids['stop'] = stop_id
+            order_ids['target'] = target_id
 
         self.trade = LiveTrade(
             signal=sig,
@@ -633,15 +678,19 @@ class LiveExecutor:
             risk=risk,
             entry_time=datetime.now(CT),
             contracts=qty,
-            order_ids={'entry': entry_id},
+            order_ids=order_ids,
             pending=True,
+            bracket_attached=attached,
+            hard_loss_usd=round(hard_loss_usd, 2),
         )
 
         model_key = (self.cur_date, sig.model)
         self.daily_model_count[model_key] = \
             self.daily_model_count.get(model_key, 0) + 1
 
-        log.info(f"    PENDING -- {qty} MNQ limit @ {sig.entry:.2f}")
+        prot = "protected (atomic bracket)" if attached else "bracket-on-fill"
+        log.info(f"    PENDING -- {qty} MNQ limit @ {sig.entry:.2f} — {prot} | "
+                 f"hard-stop ${hard_loss_usd:,.0f}")
         self.alerts.entry_pending(sig.model, sig.direction, qty, sig.entry)
 
     def _manage_trade(self):
@@ -678,6 +727,25 @@ class LiveExecutor:
                 if bar['low'] <= t.target_price:
                     self._close_trade('target')
                     return
+
+        # Hard per-trade loss backstop (live only): if open loss has run past the
+        # hard cap, force-flatten now. Catches stop-market slippage or an overrun
+        # beyond the resting stop before it can breach the daily loss cap.
+        if not self.shadow and t.hard_loss_usd > 0:
+            adverse_pts = ((t.entry_price - bar['low']) if is_long
+                           else (bar['high'] - t.entry_price))
+            open_loss_usd = (max(0.0, adverse_pts)
+                             * (MNQ_TICK_VALUE / TICK_SIZE) * t.contracts)
+            if open_loss_usd >= t.hard_loss_usd:
+                log.critical(f"    HARD STOP -- open loss ${open_loss_usd:,.0f} >= "
+                             f"cap ${t.hard_loss_usd:,.0f}, force-flattening")
+                self._log_decision({
+                    'action': 'hard_stop_triggered', 'model': t.signal.model,
+                    'open_loss_usd': round(open_loss_usd, 2),
+                    'hard_loss_usd': t.hard_loss_usd,
+                })
+                self._close_trade('hard_stop')
+                return
 
         rp = t.signal.risk_profile
 
@@ -760,6 +828,10 @@ class LiveExecutor:
                            ORD_EXPIRED: 'EXPIRED'}
             reason = status_name.get(status, 'REMOVED')
             log.info(f"    ENTRY {reason} -- resetting")
+            # An attached bracket's stop/target rest at the broker before the
+            # entry fills — cancel them so they can't become orphan orders.
+            if t.bracket_attached:
+                self.broker.cancel_all_exit_orders()
             self.alerts.entry_cancelled(t.signal.model, reason)
             self._log_decision({
                 'action': 'entry_rejected', 'reason': reason.lower(),
@@ -777,6 +849,20 @@ class LiveExecutor:
                 t.signal.model, t.direction, t.entry_price,
                 t.stop_price, t.target_price, t.contracts,
                 t.signal.risk_ticks, model_risk)
+
+            # Atomic bracket: stop+target are already live at the broker — there
+            # is nothing to place on fill. Just confirm and continue.
+            if t.bracket_attached:
+                self._log_decision({
+                    'action': 'entry_filled', 'atomic': True,
+                    'model': t.signal.model, 'direction': t.direction,
+                    'entry_price': t.entry_price, 'stop': t.stop_price,
+                    'target': t.target_price, 'contracts': t.contracts,
+                    'bracket_stop_id': t.order_ids.get('stop'),
+                    'bracket_target_id': t.order_ids.get('target'),
+                })
+                return
+
             try:
                 exit_ids = self.broker.place_exit_bracket(
                     direction=t.direction,
@@ -817,7 +903,7 @@ class LiveExecutor:
                 return
 
             self._log_decision({
-                'action': 'entry_filled',
+                'action': 'entry_filled', 'atomic': False,
                 'model': t.signal.model, 'direction': t.direction,
                 'entry_price': t.entry_price, 'stop': t.stop_price,
                 'target': t.target_price, 'contracts': t.contracts,
@@ -838,10 +924,21 @@ class LiveExecutor:
 
             pos = self.broker.get_position()
             if pos and pos['size'] > 0:
-                log.warning(f"    TIMEOUT but FILLED — {pos['size']} {pos['side']} detected, placing bracket")
                 t.pending = False
                 t.contracts = pos['size']
                 t.entry_time = datetime.now(CT)
+                # Atomic bracket already rests at the broker — the timeout cancel
+                # only touched the (already-filled) parent, not the children.
+                if t.bracket_attached:
+                    log.warning(f"    TIMEOUT but FILLED — {pos['size']} {pos['side']}, "
+                                f"atomic bracket already protecting")
+                    self._log_decision({
+                        'action': 'timeout_fill_recovered', 'atomic': True,
+                        'model': t.signal.model, 'position_size': pos['size'],
+                        'direction': pos['side'],
+                    })
+                    return
+                log.warning(f"    TIMEOUT but FILLED — {pos['size']} {pos['side']} detected, placing bracket")
                 try:
                     exit_ids = self.broker.place_exit_bracket(
                         direction=t.direction,
@@ -1029,6 +1126,10 @@ class LiveExecutor:
 
         if t.pending:
             self.broker.cancel_order(t.order_ids.get('entry'))
+            # Attached bracket children rest at the broker before fill — cancel
+            # them too so a cancelled pending entry leaves no orphan exit orders.
+            if t.bracket_attached:
+                self.broker.cancel_all_exit_orders()
             time.sleep(0.5)
             pos = self.broker.get_position()
             if pos and pos['size'] > 0:

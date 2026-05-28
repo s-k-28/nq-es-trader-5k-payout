@@ -302,6 +302,19 @@ class TopStepBroker:
                  f"(#{self._entry_order_id})")
         return self._entry_order_id
 
+    def place_bracket_entry(self, direction: str, qty: int, entry_price: float,
+                            stop_price: float, target_price: float) -> dict:
+        """Place the entry. ProjectX REST submits orders individually, and a
+        protective stop cannot rest before the entry fills without risking a
+        naked order in the wrong direction. So the bracket is attached the
+        instant the executor observes the fill (``attached=False``); stop/target
+        prices are accepted for interface parity and applied via
+        ``place_exit_bracket`` on fill.
+        """
+        entry_id = self.place_limit_entry(direction, qty, entry_price)
+        return {'entry': entry_id, 'stop': None, 'target': None,
+                'attached': False}
+
     def place_exit_bracket(self, direction: str, qty: int,
                            stop_price: float, target_price: float) -> dict:
         exit_side = SELL if direction == 'long' else BUY

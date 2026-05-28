@@ -203,6 +203,59 @@ class IBBroker:
                  f"(#{self._entry_order_id})")
         return self._entry_order_id
 
+    def place_bracket_entry(self, direction: str, qty: int, entry_price: float,
+                            stop_price: float, target_price: float) -> dict:
+        """Submit entry + protective stop + target as a native IB bracket.
+
+        The stop/target children carry the parent's ``parentId`` so they only
+        become active when the entry fills, but they are transmitted together
+        with the parent. The protective stop is therefore live at IB the instant
+        the position opens — there is no window where the position sits with no
+        stop. Returns ``attached=True`` so the executor skips post-fill placement.
+        """
+        action = 'BUY' if direction == 'long' else 'SELL'
+        exit_action = 'SELL' if direction == 'long' else 'BUY'
+        oca_group = f"br_{int(time.time())}_{qty}"
+
+        parent = LimitOrder(action, qty, self._round(entry_price))
+        parent.orderId = self.ib.client.getReqId()
+        parent.tif = 'DAY'
+        parent.transmit = False
+
+        stop_order = StopOrder(exit_action, qty, self._round(stop_price))
+        stop_order.orderId = self.ib.client.getReqId()
+        stop_order.parentId = parent.orderId
+        stop_order.tif = 'GTC'
+        stop_order.ocaGroup = oca_group
+        stop_order.ocaType = 1
+        stop_order.transmit = False
+
+        target_order = LimitOrder(exit_action, qty, self._round(target_price))
+        target_order.orderId = self.ib.client.getReqId()
+        target_order.parentId = parent.orderId
+        target_order.tif = 'GTC'
+        target_order.ocaGroup = oca_group
+        target_order.ocaType = 1
+        target_order.transmit = True  # transmits the whole group atomically
+
+        self.ib.placeOrder(self.contract, parent)
+        self.ib.placeOrder(self.contract, stop_order)
+        self.ib.placeOrder(self.contract, target_order)
+
+        self._entry_order_id = parent.orderId
+        self._stop_order_id = stop_order.orderId
+        self._target_order_id = target_order.orderId
+
+        log.info(f"Bracket entry {direction.upper()} {qty} @ {entry_price:.2f} "
+                 f"(#{parent.orderId}) | stop {stop_price:.2f} (#{stop_order.orderId})"
+                 f" target {target_price:.2f} (#{target_order.orderId}) OCA {oca_group}")
+        return {
+            'entry': parent.orderId,
+            'stop': stop_order.orderId,
+            'target': target_order.orderId,
+            'attached': True,
+        }
+
     def place_exit_bracket(self, direction: str, qty: int,
                            stop_price: float, target_price: float) -> dict:
         exit_action = 'SELL' if direction == 'long' else 'BUY'
