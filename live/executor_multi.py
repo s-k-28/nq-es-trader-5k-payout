@@ -38,6 +38,7 @@ ORD_EXPIRED = 4
 from live.reporter import HubReporter
 from live.alerts import TelegramAlerts
 from live.adaptive import AdaptiveGuard, PostTradeAnalyzer
+from live.reconciler import PnLReconciler
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +115,12 @@ class LiveExecutor:
         self.dollar_loss_cap = cfg.funded.dollar_loss_cap
         self.per_trade_hard_stop_mult = getattr(
             cfg.funded, 'per_trade_hard_stop_mult', 1.5)
+        # Broker-cash-authoritative P&L reconciliation. day_open_balance is set
+        # once the broker balance is known (run() / _new_day). Keeps the DLC
+        # honest so it can't be silently breached.
+        self.reconciler = PnLReconciler(
+            broker, day_open_balance=None,
+            dollar_loss_cap=cfg.funded.dollar_loss_cap)
 
         Path(STATE_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -219,6 +226,7 @@ class LiveExecutor:
             self._alerted_dlc = False
             self._alerted_profit_target = False
             self._day_open_balance = self.start_balance
+        self.reconciler.day_open_balance = self.start_balance
 
         self.guard.load_state(ADAPTIVE_STATE)
         self.analyzer.load_state(AUTOPSY_STATE)
@@ -330,6 +338,7 @@ class LiveExecutor:
         acct = self.broker.get_account_info()
         bal = acct.get('balance', self.start_balance)
         self._day_open_balance = bal
+        self.reconciler.day_open_balance = bal
         if bal > self.peak_balance:
             self.peak_balance = bal
 
@@ -376,6 +385,39 @@ class LiveExecutor:
         now = datetime.now(CT)
         if not GLOBEX_MODE and now.time() >= dt_time(15, 45):
             return
+
+        # Reconcile believed daily P&L against broker cash truth BEFORE any gate.
+        # The dollar-loss cap is only as reliable as daily_pnl_usd, which is built
+        # from optimistic bar-close estimates — this keeps it honest and fail-closed.
+        if not self.shadow:
+            recon = self.reconciler.reconcile(self.daily_pnl_usd)
+            if recon['action'] == 'skip':
+                log.warning("    SKIP -- P&L reconciliation unavailable "
+                            f"({recon['reason']}); not entering blind")
+                self._log_decision({
+                    'action': 'skip_signal', 'reason': 'reconciliation_unavailable',
+                })
+                return
+            if recon['action'] in ('correct', 'halt') and \
+                    abs(recon['reconciled_pnl'] - self.daily_pnl_usd) > 0.005:
+                log.warning(
+                    f"    P&L RECONCILED: believed ${self.daily_pnl_usd:,.2f} -> "
+                    f"broker-truth ${recon['reconciled_pnl']:,.2f} "
+                    f"(broker ${recon['broker_pnl']:,.2f}, div ${recon['divergence']:,.2f})")
+                self._log_decision({
+                    'action': 'pnl_reconciliation_correction',
+                    'believed_pnl': recon['believed_pnl'],
+                    'broker_pnl': recon['broker_pnl'],
+                    'reconciled_pnl': recon['reconciled_pnl'],
+                    'divergence': recon['divergence'],
+                })
+                self.daily_pnl_usd = recon['reconciled_pnl']
+            if recon['action'] == 'halt':
+                self.alerts.error(
+                    f"DLC MISSED BREACH: broker shows ${recon['broker_pnl']:,.0f} loss "
+                    f"(bot believed ${recon['believed_pnl']:,.0f}). Halting — manual review.")
+                self._halt('dlc_missed_breach')
+                return
 
         if self.daily_pnl_usd >= self.daily_profit_target:
             if not self._alerted_profit_target:

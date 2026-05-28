@@ -83,6 +83,9 @@ def _make_executor(cfg=None, shadow=False, position_size=0, tmp_path=None):
     exe.cur_date = datetime.now().date()
     exe.start_balance = 100000.0
     exe.peak_balance = 100000.0
+    # Reconciler baseline: broker balance (100k) == day-open == start, so
+    # reconciliation is a no-op unless a test sets a divergent balance/pnl.
+    exe.reconciler.day_open_balance = 100000.0
     if tmp_path:
         # Redirect ALL state paths into tmp so tests never touch live state
         # (adaptive guard learning, autopsy, decision log, journal).
@@ -928,6 +931,75 @@ class TestAtomicBracketEntry:
         exe.broker.place_exit_bracket.assert_called_once()
         assert exe.trade.order_ids['stop'] == 7002
         assert exe.trade.pending is False
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 18b. P&L RECONCILIATION  (DLC can't fail open)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestPnLReconciliation:
+    def test_halts_entry_on_broker_missed_breach(self, tmp_path):
+        """Broker shows a cap breach the bot missed -> halt, no entry."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.reconciler.day_open_balance = 100_000.0
+        exe.daily_pnl_usd = -400.0                                   # bot believes -400
+        exe.broker.get_account_info.return_value = {'balance': 98_700.0}  # real -1300
+        now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            exe._check_signals()
+        assert exe.halted is True
+        exe.broker.place_bracket_entry.assert_not_called()
+        exe.broker.place_limit_entry.assert_not_called()
+
+    def test_corrects_understated_pnl_then_dlc_gate_blocks(self, tmp_path):
+        """Broker worse than believed but not 'missed' -> correct, DLC gate stops."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.reconciler.day_open_balance = 100_000.0
+        exe.daily_pnl_usd = -300.0
+        exe.broker.get_account_info.return_value = {'balance': 98_900.0}  # real -1100
+        exe._alerted_dlc = False
+        now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            exe._check_signals()
+        # daily_pnl_usd was corrected down to broker truth, tripping the DLC gate.
+        assert exe.daily_pnl_usd == -1100.0
+        exe.broker.place_bracket_entry.assert_not_called()
+
+    def test_skips_entry_when_broker_unavailable(self, tmp_path):
+        """Can't verify P&L -> skip the entry (fail-closed), don't trade blind."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.reconciler.day_open_balance = 100_000.0
+        exe.broker.get_account_info.side_effect = RuntimeError('api down')
+        sig = make_signal(ts=pd.Timestamp('2025-05-09 10:00:00'))
+        now_ct = datetime(2025, 5, 9, 10, 0, 30, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            with patch.object(exe.gen, 'generate', return_value=[sig]):
+                exe._check_signals()
+        exe.broker.place_bracket_entry.assert_not_called()
+        assert exe.halted is False   # transient -> skip, not terminal halt
+
+    def test_clean_day_is_a_noop(self, tmp_path):
+        """Flat at day open -> reconciliation does not interfere with entry flow."""
+        exe = _make_executor(tmp_path=tmp_path)
+        exe.reconciler.day_open_balance = 100_000.0
+        exe.broker.get_account_info.return_value = {'balance': 100_000.0}
+        sig = make_signal(ts=pd.Timestamp('2025-05-09 10:00:00'))
+        now_ct = datetime(2025, 5, 9, 10, 0, 30, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            with patch.object(exe.gen, 'generate', return_value=[sig]):
+                with patch.object(exe.guard, 'pre_entry_check', return_value=(1.0, [])):
+                    exe._check_signals()
+        # No reconciliation skip/halt; the normal entry path ran.
+        assert exe.halted is False
+        exe.broker.place_bracket_entry.assert_called_once()
 
 
 # ═══════════════════════════════════════════════════════════════════
