@@ -1,19 +1,20 @@
-"""Live executor — 12-model strategy on TopStepX 100K funded account.
+"""Live executor — 12-model strategy targeting $10K/month on funded account.
 
-Sizing matches backtest exactly: model-tiered dollar risk from
-cfg.funded.model_risk_dollars, converted to contracts via
-min(20, floor(risk_dollars / (risk_ticks * $0.50))).
+Sizing: model-tiered dollar risk from cfg.funded.model_risk_dollars,
+converted to contracts via min(20, floor(risk_dollars / (risk_ticks * $0.50))).
 
-Risk controls (matching backtest engine_v2 + funded_sim):
-- Daily win cap: 2.0R total, stop taking signals
-- Dollar loss cap: $1,000/day, skip trades once breached
-- Consecutive loss cooldown: 10 losses, skip next signal
-- No daily R loss limit (allows intraday recovery)
-- BE at configured trigger, trail at trail_pct, partial profit locking
+Risk controls:
+- Daily profit target: stop trading when dollar P&L target hit ($800)
+- Daily win cap: configurable R cap (3.0R), stop taking signals
+- Dollar loss cap: per-day ($1,000), skip trades once breached
+- Green day protection: half size when up $250+ to protect green day
+- Consecutive loss cooldown: skip next signal after 10 losses
+- BE at 0.8R trigger, trail at trail_pct
+- PostTradeAnalyzer regime-based blocking + failure pattern detection
 
-Funded account rules (TopStepX 100K XFA):
-- $3,000 trailing drawdown, locks at $0 floor when peak >= $3K
-- $5,000 max payout, 30% of balance, 5 green days ($150+)
+Funded account rules:
+- Trailing drawdown, locks at floor when peak >= static threshold
+- Payout: max payout, balance pct, green days required
 """
 from __future__ import annotations
 import json
@@ -36,7 +37,7 @@ ORD_REJECTED = 5
 ORD_EXPIRED = 4
 from live.reporter import HubReporter
 from live.alerts import TelegramAlerts
-from live.adaptive import AdaptiveGuard
+from live.adaptive import AdaptiveGuard, PostTradeAnalyzer
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ STATE_DIR = 'live/state'
 ADAPTIVE_STATE = f'{STATE_DIR}/adaptive.json'
 ADAPTIVE_JOURNAL = f'{STATE_DIR}/journal.json'
 DECISION_LOG = f'{STATE_DIR}/decisions.jsonl'
+AUTOPSY_STATE = f'{STATE_DIR}/autopsy.json'
 
 
 @dataclass
@@ -80,6 +82,7 @@ class LiveExecutor:
         self.reporter = HubReporter()
         self.alerts = TelegramAlerts()
         self.guard = AdaptiveGuard()
+        self.analyzer = PostTradeAnalyzer()
 
         self.buf = pd.DataFrame()
         self.daily_df = pd.DataFrame()
@@ -98,7 +101,8 @@ class LiveExecutor:
         self.consec_losses = 0
         self.halted = False
 
-        self.daily_win_cap = 2.0
+        self.daily_win_cap = cfg.funded.daily_win_cap_r
+        self.daily_profit_target = cfg.funded.daily_profit_target
         self.consec_cooldown = 10
         self.dollar_loss_cap = cfg.funded.dollar_loss_cap
 
@@ -204,15 +208,20 @@ class LiveExecutor:
             self.cur_date = now_ct.date()
             self._alerted_win_cap = False
             self._alerted_dlc = False
+            self._alerted_profit_target = False
             self._day_open_balance = self.start_balance
 
         self.guard.load_state(ADAPTIVE_STATE)
+        self.analyzer.load_state(AUTOPSY_STATE)
 
         risk_str = ' | '.join(f"{m}:${d:,}" for m, d in
                               sorted(self.cfg.funded.model_risk_dollars.items()))
         log.info(f"Model risk tiers: {risk_str}")
         log.info(f"Daily win cap: {self.daily_win_cap}R | "
-                 f"Dollar loss cap: ${self.dollar_loss_cap:,.0f} | "
+                 f"Profit target: ${self.daily_profit_target:,.0f} | "
+                 f"Dollar loss cap: ${self.dollar_loss_cap:,.0f}")
+        log.info(f"Green day protect: ${self.cfg.funded.green_day_protect:,.0f} "
+                 f"(scale {self.cfg.funded.green_day_protect_scale:.0%}) | "
                  f"Consec cooldown: {self.consec_cooldown}")
         log.info(f"Trailing DD: ${self.cfg.funded.trailing_dd:,.0f} | "
                  f"Static threshold: ${self.cfg.funded.static_threshold:,.0f}")
@@ -304,6 +313,7 @@ class LiveExecutor:
         self.daily_model_count = {}
         self._alerted_win_cap = False
         self._alerted_dlc = False
+        self._alerted_profit_target = False
 
         log.info(f"\n{'='*60}")
         log.info(f"New day: {today}")
@@ -356,6 +366,18 @@ class LiveExecutor:
     def _check_signals(self):
         now = datetime.now(CT)
         if not GLOBEX_MODE and now.time() >= dt_time(15, 45):
+            return
+
+        if self.daily_pnl_usd >= self.daily_profit_target:
+            if not self._alerted_profit_target:
+                log.info(f"PROFIT TARGET HIT -- Day done: "
+                         f"${self.daily_pnl_usd:,.0f} >= ${self.daily_profit_target:,.0f}")
+                self._log_decision({
+                    'action': 'skip_all', 'reason': 'daily_profit_target',
+                    'daily_pnl': self.daily_pnl_usd,
+                    'target': self.daily_profit_target,
+                })
+                self._alerted_profit_target = True
             return
 
         if self.daily_r >= self.daily_win_cap:
@@ -480,6 +502,23 @@ class LiveExecutor:
                 'model': sig.model, 'guards': guards, 'scale': 0.0,
             })
             return
+
+        regime = self._detect_regime()
+        regime_blocked, regime_reason = self.analyzer.should_block_regime(sig.model, regime)
+        if regime_blocked:
+            log.info(f"    SKIP -- Regime filter: {regime_reason}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'regime_filter',
+                'model': sig.model, 'regime': regime, 'detail': regime_reason,
+            })
+            return
+
+        pattern = self.analyzer.get_recent_failure_pattern(sig.model)
+        if pattern:
+            log.warning(f"    WARNING -- {pattern}")
+            scale *= 0.5
+            guards.append(f"failure_pattern:{pattern[:40]}")
+
         if scale < 1.0:
             scaled_qty = max(1, int(qty * scale))
             log.info(f"    AdaptiveGuard scale: {qty} -> {scaled_qty} MNQ ({guards})")
@@ -502,6 +541,15 @@ class LiveExecutor:
                      f"(remaining ${dlc_remaining:,.0f})")
             qty = max_qty
             potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
+
+        if self.daily_pnl_usd >= self.cfg.funded.green_day_protect:
+            gd_scale = self.cfg.funded.green_day_protect_scale
+            gd_qty = max(1, int(qty * gd_scale))
+            if gd_qty < qty:
+                log.info(f"    GREEN DAY PROTECT: {qty} -> {gd_qty} MNQ "
+                         f"(up ${self.daily_pnl_usd:,.0f}, protecting green day)")
+                qty = gd_qty
+                potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
 
         log.info(f"\n>>> SIGNAL: [{sig.model}] {sig.direction.upper()} "
                  f"@ {sig.entry:.2f} ({qty} MNQ, ${model_risk} risk tier)")
@@ -947,10 +995,28 @@ class LiveExecutor:
         })
 
         now_ct = datetime.now(CT)
+        atr_ratio = self._current_atr() / max(self._avg_atr(), 0.01)
         self.guard.record_trade(
-            t.signal.model, total_r, pnl, now_ct.hour,
-            self._current_atr() / max(self._avg_atr(), 0.01))
+            t.signal.model, total_r, pnl, now_ct.hour, atr_ratio)
         self.guard.save_state(ADAPTIVE_STATE)
+
+        hold_secs = (datetime.now(CT) - t.entry_time).total_seconds()
+        autopsy = self.analyzer.analyze_trade(
+            model=t.signal.model, direction=t.direction,
+            total_r=total_r, pnl_usd=pnl, mfe=t.mfe,
+            risk=t.risk, risk_ticks=t.signal.risk_ticks,
+            reason=reason, atr_ratio=atr_ratio,
+            hour=now_ct.hour, hold_seconds=hold_secs,
+            regime=self._detect_regime(),
+        )
+        self.analyzer.save_state(AUTOPSY_STATE)
+        self._log_decision({
+            'action': 'trade_autopsy',
+            'failure_mode': autopsy.failure_mode,
+            'lesson': autopsy.lesson,
+            'mfe_r': autopsy.mfe_r,
+            'regime': autopsy.regime,
+        })
 
         self._reset_trade()
 
@@ -1043,10 +1109,28 @@ class LiveExecutor:
         self._log_decision({'action': 'trade_closed', **trade_record})
 
         now_ct = datetime.now(CT)
+        atr_ratio = self._current_atr() / max(self._avg_atr(), 0.01)
         self.guard.record_trade(
-            t.signal.model, total_r, pnl_usd, now_ct.hour,
-            self._current_atr() / max(self._avg_atr(), 0.01))
+            t.signal.model, total_r, pnl_usd, now_ct.hour, atr_ratio)
         self.guard.save_state(ADAPTIVE_STATE)
+
+        hold_secs = (datetime.now(CT) - t.entry_time).total_seconds()
+        autopsy = self.analyzer.analyze_trade(
+            model=t.signal.model, direction=t.direction,
+            total_r=total_r, pnl_usd=pnl_usd, mfe=t.mfe,
+            risk=t.risk, risk_ticks=t.signal.risk_ticks,
+            reason=reason, atr_ratio=atr_ratio,
+            hour=now_ct.hour, hold_seconds=hold_secs,
+            regime=self._detect_regime(),
+        )
+        self.analyzer.save_state(AUTOPSY_STATE)
+        self._log_decision({
+            'action': 'trade_autopsy',
+            'failure_mode': autopsy.failure_mode,
+            'lesson': autopsy.lesson,
+            'mfe_r': autopsy.mfe_r,
+            'regime': autopsy.regime,
+        })
 
         self._reset_trade()
 
@@ -1087,9 +1171,34 @@ class LiveExecutor:
         finally:
             self.guard.save_state(ADAPTIVE_STATE)
             self.guard.save_journal(ADAPTIVE_JOURNAL)
+            self.analyzer.save_state(AUTOPSY_STATE)
             self.alerts.bot_stopped("shutdown")
             self._log_decision({'action': 'shutdown', 'reason': 'user_requested'})
             log.info("Executor shutdown complete.")
+
+    def _detect_regime(self) -> str:
+        """Classify current market regime from recent price action."""
+        if self.daily_df.empty or len(self.daily_df) < 20:
+            return 'unknown'
+        recent = self.daily_df.tail(20)
+        closes = recent['close'].values
+        if len(closes) < 20:
+            return 'unknown'
+        ema10 = closes[-10:].mean()
+        ema20 = closes.mean()
+        atr_ratio = self._current_atr() / max(self._avg_atr(), 0.01)
+
+        if atr_ratio > 1.8:
+            return 'high_vol'
+        if atr_ratio < 0.4:
+            return 'low_vol'
+
+        pct_change = (closes[-1] - closes[0]) / closes[0] if closes[0] > 0 else 0
+        if pct_change > 0.02 and ema10 > ema20:
+            return 'trending_up'
+        if pct_change < -0.02 and ema10 < ema20:
+            return 'trending_down'
+        return 'ranging'
 
     def _current_atr(self) -> float:
         if self.buf.empty or len(self.buf) < 15:

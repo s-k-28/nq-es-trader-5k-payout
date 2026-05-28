@@ -54,7 +54,7 @@ class RiskParams:
     stop_buffer_ticks: int = 3
     min_risk_ticks: int = 40
     max_risk_ticks: int = 200
-    be_trigger_rr: float = 0.6
+    be_trigger_rr: float = 0.8
     partial_rr: float = 0.5
     partial_pct: float = 0.0
     target_rr: float = 3.0
@@ -74,14 +74,18 @@ class FundedAccountParams:
     payout_balance_pct: float = 0.30
     green_days_per_payout: int = 5
     dollar_loss_cap: float = 1000.0
+    daily_profit_target: float = 800.0
+    green_day_protect: float = 250.0
+    green_day_protect_scale: float = 0.5
+    daily_win_cap_r: float = 3.0
     post_static_scaling: list = field(default_factory=lambda: [
         (3000, 1.0), (0, 1.0),
     ])
     model_risk_dollars: dict = field(default_factory=lambda: {
-        'ou_rev': 2500, 'pd_rev': 900,
-        'vwap_rev': 400, 'or_rev': 400, 'ou_lunch': 400,
-        'vwap_scalp': 400, 'open_drive': 400,
-        'trend': 400, 'pm_mom': 400,
+        'ou_rev': 500, 'pd_rev': 500,
+        'vwap_rev': 500, 'or_rev': 500, 'ou_lunch': 400,
+        'vwap_scalp': 400, 'open_drive': 600,
+        'trend': 600, 'pm_mom': 400,
         'ema_rev': 400, 'kalman_mom': 400, 'sweep': 400,
     })
 

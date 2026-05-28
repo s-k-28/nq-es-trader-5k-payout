@@ -2,15 +2,19 @@
 
 Does NOT change the core strategy. Only scales DOWN or pauses when conditions
 indicate higher risk. All decisions are logged and journaled for human review.
+
+PostTradeAnalyzer classifies WHY trades fail and builds conditional filters
+so the bot doesn't repeat the same mistakes.
 """
 from __future__ import annotations
 
 import json
 import logging
 import threading
-from collections import deque
+from collections import deque, defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -557,3 +561,255 @@ class AdaptiveGuard:
             )
 
         return scale, guards_fired
+
+
+# ---------------------------------------------------------------------------
+# Failure mode classification
+# ---------------------------------------------------------------------------
+
+class FailureMode(str, Enum):
+    IMMEDIATE_STOP = 'immediate_stop'
+    GAVE_BACK_PROFIT = 'gave_back_profit'
+    WRONG_DIRECTION = 'wrong_direction'
+    TARGET_TOO_FAR = 'target_too_far'
+    VOL_SPIKE = 'vol_spike'
+    BAD_REGIME = 'bad_regime'
+    TIME_DECAY = 'time_decay'
+    WINNER = 'winner'
+    BREAKEVEN = 'breakeven'
+
+
+class MarketRegime(str, Enum):
+    TRENDING_UP = 'trending_up'
+    TRENDING_DOWN = 'trending_down'
+    RANGING = 'ranging'
+    HIGH_VOL = 'high_vol'
+    LOW_VOL = 'low_vol'
+
+
+@dataclass
+class TradeAutopsy:
+    """Full post-trade analysis with failure classification."""
+    timestamp: str
+    model: str
+    direction: str
+    total_r: float
+    pnl_usd: float
+    failure_mode: str
+    regime: str
+    hour: int
+    atr_ratio: float
+    mfe_r: float
+    hold_minutes: float
+    risk_ticks: float
+    lesson: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'TradeAutopsy':
+        return cls(**d)
+
+
+AUTOPSY_ROLLING = 50
+REGIME_SAMPLE_MIN = 5
+REGIME_BLOCK_THRESHOLD = -2.0
+
+
+class PostTradeAnalyzer:
+    """Classifies WHY trades fail and builds conditional filters.
+
+    A wise trader journals every trade, identifies patterns in losses,
+    and creates rules to avoid repeating them. This does it automatically.
+
+    Failure modes:
+      - immediate_stop: MFE < 0.3R, stopped out fast. Wrong entry or direction.
+      - gave_back_profit: MFE > 1.0R but ended negative. Trail/target issue.
+      - wrong_direction: MFE near zero, market went opposite. Signal was wrong.
+      - target_too_far: MFE > 0.5R but < target, then reversed. Target too ambitious.
+      - vol_spike: ATR > 1.5x avg at entry. Volatility killed the trade.
+      - bad_regime: Model type vs market regime mismatch.
+      - time_decay: Hit time stop, never got going.
+
+    Conditional filters built from patterns:
+      - model + regime → if cumulative R < threshold, block that combo
+      - model + hour → already handled by AdaptiveGuard, but reinforced here
+      - model + atr_bucket → block in specific volatility conditions
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._autopsies: deque[TradeAutopsy] = deque(maxlen=200)
+        self._regime_scores: dict[str, float] = defaultdict(float)
+        self._regime_counts: dict[str, int] = defaultdict(int)
+
+    def analyze_trade(self, model: str, direction: str, total_r: float,
+                      pnl_usd: float, mfe: float, risk: float,
+                      risk_ticks: float, reason: str, atr_ratio: float,
+                      hour: int, hold_seconds: float,
+                      regime: str = 'unknown') -> TradeAutopsy:
+        """Perform post-trade autopsy: classify failure and extract lesson."""
+
+        mfe_r = mfe / risk if risk > 0 else 0.0
+        hold_min = hold_seconds / 60.0
+
+        if total_r > 0.3:
+            failure_mode = FailureMode.WINNER
+            lesson = f"Good trade. MFE {mfe_r:.1f}R captured."
+        elif abs(total_r) <= 0.3:
+            failure_mode = FailureMode.BREAKEVEN
+            lesson = "Scratched. No clear edge on this entry."
+        elif reason == 'time_stop':
+            failure_mode = FailureMode.TIME_DECAY
+            lesson = (f"Held {hold_min:.0f}m with no movement. "
+                      f"Model {model} may not have edge in current conditions.")
+        elif atr_ratio > 1.5:
+            failure_mode = FailureMode.VOL_SPIKE
+            lesson = (f"ATR was {atr_ratio:.1f}x average. "
+                      f"Volatility too high for {model} sizing.")
+        elif mfe_r < 0.3:
+            if mfe_r < 0.1:
+                failure_mode = FailureMode.WRONG_DIRECTION
+                lesson = (f"MFE only {mfe_r:.2f}R — market went straight against. "
+                          f"Signal quality was poor for {model} {direction}.")
+            else:
+                failure_mode = FailureMode.IMMEDIATE_STOP
+                lesson = (f"MFE {mfe_r:.2f}R before stop. Entry timing was off. "
+                          f"Consider: was {model} fighting the trend?")
+        elif mfe_r >= 1.0:
+            failure_mode = FailureMode.GAVE_BACK_PROFIT
+            lesson = (f"Reached {mfe_r:.1f}R profit then reversed to {total_r:.2f}R. "
+                      f"Trail stop or partial profit rules need review.")
+        elif mfe_r >= 0.5:
+            failure_mode = FailureMode.TARGET_TOO_FAR
+            lesson = (f"MFE was {mfe_r:.1f}R but target required more. "
+                      f"Smaller target or earlier partial would have saved this.")
+        else:
+            failure_mode = FailureMode.IMMEDIATE_STOP
+            lesson = f"Stopped out with MFE {mfe_r:.2f}R."
+
+        # Check regime mismatch
+        if total_r < -0.3 and regime != 'unknown':
+            is_mean_rev = 'rev' in model or 'ou' in model
+            is_momentum = 'mom' in model or 'trend' in model or 'breakout' in model
+            if is_mean_rev and regime in ('trending_up', 'trending_down'):
+                failure_mode = FailureMode.BAD_REGIME
+                lesson = (f"Mean-reversion model {model} traded in {regime} regime. "
+                          f"Don't fade trends.")
+            elif is_momentum and regime == 'ranging':
+                failure_mode = FailureMode.BAD_REGIME
+                lesson = (f"Momentum model {model} traded in ranging market. "
+                          f"No trend to ride.")
+
+        autopsy = TradeAutopsy(
+            timestamp=datetime.utcnow().isoformat(),
+            model=model,
+            direction=direction,
+            total_r=round(total_r, 3),
+            pnl_usd=round(pnl_usd, 2),
+            failure_mode=failure_mode.value,
+            regime=regime,
+            hour=hour,
+            atr_ratio=round(atr_ratio, 3),
+            mfe_r=round(mfe_r, 3),
+            hold_minutes=round(hold_min, 1),
+            risk_ticks=risk_ticks,
+            lesson=lesson,
+        )
+
+        with self._lock:
+            self._autopsies.append(autopsy)
+            combo_key = f"{model}|{regime}"
+            self._regime_scores[combo_key] += total_r
+            self._regime_counts[combo_key] += 1
+
+        if total_r < -0.3:
+            log.warning(
+                f"[PostTradeAnalyzer] AUTOPSY [{failure_mode.value}] {model} "
+                f"{direction}: {total_r:+.2f}R | MFE={mfe_r:.1f}R | "
+                f"regime={regime} | {lesson}"
+            )
+        else:
+            log.info(
+                f"[PostTradeAnalyzer] {model} {direction}: {total_r:+.2f}R | "
+                f"MFE={mfe_r:.1f}R | {failure_mode.value}"
+            )
+
+        return autopsy
+
+    def should_block_regime(self, model: str, regime: str) -> tuple[bool, str]:
+        """Check if model+regime combo has been losing. Returns (block, reason)."""
+        combo_key = f"{model}|{regime}"
+        with self._lock:
+            count = self._regime_counts.get(combo_key, 0)
+            if count < REGIME_SAMPLE_MIN:
+                return False, ''
+            cum_r = self._regime_scores.get(combo_key, 0.0)
+            avg_r = cum_r / count
+            if cum_r < REGIME_BLOCK_THRESHOLD:
+                reason = (f"{model} in {regime}: {count} trades, "
+                          f"cumR={cum_r:+.1f}, avgR={avg_r:+.2f}")
+                log.info(f"[PostTradeAnalyzer] BLOCKING {reason}")
+                return True, reason
+        return False, ''
+
+    def get_recent_failure_pattern(self, model: str, n: int = 5) -> str | None:
+        """If last N trades of a model share the same failure mode, flag it."""
+        with self._lock:
+            model_trades = [a for a in self._autopsies
+                            if a.model == model and a.failure_mode not in
+                            (FailureMode.WINNER.value, FailureMode.BREAKEVEN.value)]
+            if len(model_trades) < n:
+                return None
+            recent = list(model_trades)[-n:]
+            modes = [t.failure_mode for t in recent]
+            if len(set(modes)) == 1:
+                return (f"{model} has {n} consecutive {modes[0]} failures. "
+                        f"Recurring pattern detected.")
+        return None
+
+    def get_model_summary(self) -> dict[str, dict]:
+        """Return per-model failure mode breakdown for reporting."""
+        with self._lock:
+            summary = defaultdict(lambda: defaultdict(int))
+            for a in self._autopsies:
+                summary[a.model][a.failure_mode] += 1
+            return {m: dict(modes) for m, modes in summary.items()}
+
+    def save_state(self, filepath: str) -> None:
+        path = Path(filepath)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            state = {
+                'autopsies': [a.to_dict() for a in self._autopsies],
+                'regime_scores': dict(self._regime_scores),
+                'regime_counts': dict(self._regime_counts),
+                'saved_at': datetime.utcnow().isoformat(),
+            }
+        with open(path, 'w') as f:
+            json.dump(state, f, indent=2)
+        log.info(f"[PostTradeAnalyzer] State saved: {len(self._autopsies)} autopsies -> {filepath}")
+
+    def load_state(self, filepath: str) -> bool:
+        path = Path(filepath)
+        if not path.exists():
+            log.info(f"[PostTradeAnalyzer] No saved state at {filepath}")
+            return False
+        try:
+            with open(path, 'r') as f:
+                state = json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            log.warning(f"[PostTradeAnalyzer] Failed to load {filepath}: {e}")
+            return False
+        with self._lock:
+            self._autopsies.clear()
+            for d in state.get('autopsies', []):
+                try:
+                    self._autopsies.append(TradeAutopsy.from_dict(d))
+                except (TypeError, KeyError):
+                    pass
+            self._regime_scores = defaultdict(float, state.get('regime_scores', {}))
+            self._regime_counts = defaultdict(int, state.get('regime_counts', {}))
+        log.info(f"[PostTradeAnalyzer] Loaded {len(self._autopsies)} autopsies from {filepath}")
+        return True
