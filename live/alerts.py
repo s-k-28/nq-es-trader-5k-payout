@@ -34,14 +34,19 @@ class TelegramAlerts:
         threading.Thread(target=self._post, args=(text,), daemon=True).start()
 
     def _post(self, text: str):
+        # Failures are logged (never the token) so a dead alert channel — which
+        # would silently swallow naked-position/halt emergencies — is visible.
         try:
-            requests.post(
+            resp = requests.post(
                 f"https://api.telegram.org/bot{self.token}/sendMessage",
                 json={'chat_id': self.chat_id, 'text': text, 'parse_mode': 'HTML'},
                 timeout=10,
             )
-        except Exception:
-            pass
+            if resp.status_code != 200:
+                log.warning(f"Telegram send failed: HTTP {resp.status_code} — "
+                            "check TELEGRAM_BOT_TOKEN/CHAT_ID; alerts may be dropping")
+        except Exception as e:
+            log.warning(f"Telegram send error: {e} — alerts may be dropping")
 
     def trade_entry(self, model: str, direction: str, entry: float,
                     stop: float, target: float, contracts: int,

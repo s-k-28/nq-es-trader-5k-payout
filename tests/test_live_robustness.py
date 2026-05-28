@@ -54,6 +54,7 @@ def _make_executor(cfg=None, shadow=False, position_size=0, tmp_path=None):
         cfg = Config()
     broker = MagicMock()
     broker.position_size = MagicMock(return_value=position_size)
+    broker.get_position = MagicMock(return_value=None)
     broker.get_account_info = MagicMock(return_value={
         'id': 12345, 'name': 'Test', 'balance': 100000.0,
     })
@@ -338,7 +339,7 @@ class TestFrontMonth:
 class TestExecutorRiskControls:
     def test_win_cap_blocks(self, tmp_path):
         exe = _make_executor(tmp_path=tmp_path)
-        exe.daily_r = 2.5
+        exe.daily_r = 3.5   # >= daily_win_cap_r (3.0)
         exe._alerted_win_cap = False
         now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
         with patch('live.executor_multi.datetime') as mock_dt:
@@ -568,12 +569,12 @@ class TestConfig:
         cfg = Config()
         assert cfg.instrument.tick_size == 0.25
         assert cfg.funded.trailing_dd == 3000.0
-        assert cfg.funded.dollar_loss_cap == 800.0
+        assert cfg.funded.dollar_loss_cap == 1000.0
 
     def test_model_risk_dollars(self):
         cfg = Config()
         assert 'ou_rev' in cfg.funded.model_risk_dollars
-        assert cfg.funded.model_risk_dollars['ou_rev'] == 2500
+        assert cfg.funded.model_risk_dollars['ou_rev'] == 500
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -619,7 +620,8 @@ class TestDecisionJournal:
         log_path = str(tmp_path / 'decisions.jsonl')
         monkeypatch.setattr(em, 'DECISION_LOG', log_path)
         exe = _make_executor(tmp_path=tmp_path)
-        now_ct = datetime(2025, 5, 9, 10, 5, 0, tzinfo=em.CT)
+        # 35 min old > the 1800s (30 min) stale threshold.
+        now_ct = datetime(2025, 5, 9, 10, 35, 0, tzinfo=em.CT)
         sig = make_signal(ts=pd.Timestamp('2025-05-09 10:00:00'))
         with patch('live.executor_multi.datetime') as mock_dt:
             mock_dt.now.return_value = now_ct
@@ -651,7 +653,7 @@ class TestDecisionJournal:
         log_path = str(tmp_path / 'decisions.jsonl')
         monkeypatch.setattr(em, 'DECISION_LOG', log_path)
         exe = _make_executor(tmp_path=tmp_path)
-        exe.daily_r = 2.5
+        exe.daily_r = 3.5   # >= daily_win_cap_r (3.0)
         exe._alerted_win_cap = False
         now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
         with patch('live.executor_multi.datetime') as mock_dt:
@@ -1115,3 +1117,58 @@ class TestDlcHardGuard:
 
         exe.broker.flatten.assert_not_called()
         assert exe.trade is not None
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 20. SIGNAL GEOMETRY VALIDATION
+# ═══════════════════════════════════════════════════════════════════
+
+class TestSignalGeometry:
+    def test_rejects_long_with_stop_above_entry(self, tmp_path):
+        exe = _make_executor(tmp_path=tmp_path)
+        sig = make_signal(direction='long', entry=20000.0, stop=20050.0, target=20150.0)
+        _enter_signal(exe, sig)
+        exe.broker.place_bracket_entry.assert_not_called()
+
+    def test_rejects_short_with_stop_below_entry(self, tmp_path):
+        exe = _make_executor(tmp_path=tmp_path)
+        sig = make_signal(direction='short', entry=20000.0, stop=19950.0, target=19900.0)
+        _enter_signal(exe, sig)
+        exe.broker.place_bracket_entry.assert_not_called()
+
+    def test_rejects_nonpositive_price(self, tmp_path):
+        exe = _make_executor(tmp_path=tmp_path)
+        sig = make_signal(direction='long', entry=20000.0, stop=0.0, target=20150.0)
+        _enter_signal(exe, sig)
+        exe.broker.place_bracket_entry.assert_not_called()
+
+    def test_accepts_valid_long_geometry(self, tmp_path):
+        exe = _make_executor(tmp_path=tmp_path)
+        sig = make_signal(direction='long', entry=20000.0, stop=19950.0, target=20150.0)
+        _enter_signal(exe, sig)
+        exe.broker.place_bracket_entry.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 21. BAR-DATA SANITY GATE
+# ═══════════════════════════════════════════════════════════════════
+
+class TestBarSanity:
+    def test_merge_drops_invalid_bar(self):
+        exe = _make_executor()
+        exe.buf = _make_bars(10)
+        last = exe.buf['datetime'].max()
+        good = _make_bars(2, start_time=last + timedelta(minutes=1))
+        bad = good.iloc[[-1]].copy()
+        bad['datetime'] = bad['datetime'] + timedelta(minutes=1)
+        bad['low'] = 99999.0   # low > high -> invalid
+        new = pd.concat([good, bad], ignore_index=True)
+        count = exe._merge_bars(new)
+        assert count == 2   # the invalid bar was dropped
+
+    def test_sanitize_drops_nan_and_nonpositive(self):
+        df = _make_bars(3)
+        df.loc[0, 'close'] = float('nan')
+        df.loc[1, 'open'] = 0.0
+        clean = em.LiveExecutor._sanitize_bars(df)
+        assert len(clean) == 1   # only the third row survives

@@ -17,6 +17,11 @@ data/v*_trades.csv
 *.png
 !output/charts/chart_*.png
 
+# Live trading runtime state (contains P&L / activity — keep out of git)
+live/state/*.jsonl
+live/state/autopsy.json
+live/state/day_open.json
+
 # OS
 .DS_Store
 Thumbs.db

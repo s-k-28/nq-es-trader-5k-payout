@@ -432,7 +432,29 @@ class LiveExecutor:
 
         log.info(f"{'='*60}\n")
 
+    @staticmethod
+    def _sanitize_bars(df: pd.DataFrame) -> pd.DataFrame:
+        """Drop bars with garbage OHLC before they poison features/signals/orders.
+
+        Keeps only rows where all prices are finite and positive and the OHLC
+        relationships hold (low <= open/close <= high, low <= high).
+        """
+        if df is None or df.empty:
+            return df
+        ok = (
+            df[['open', 'high', 'low', 'close']].notna().all(axis=1)
+            & (df[['open', 'high', 'low', 'close']] > 0).all(axis=1)
+            & (df['high'] >= df['low'])
+            & (df['high'] >= df['open']) & (df['high'] >= df['close'])
+            & (df['low'] <= df['open']) & (df['low'] <= df['close'])
+        )
+        if not ok.all():
+            dropped = int((~ok).sum())
+            log.warning(f"    Dropped {dropped} invalid bar(s) (bad OHLC/NaN/<=0)")
+        return df[ok]
+
     def _merge_bars(self, latest: pd.DataFrame) -> int:
+        latest = self._sanitize_bars(latest)
         if self.buf.empty:
             self.buf = latest
             return len(latest)
@@ -571,6 +593,32 @@ class LiveExecutor:
         self._enter_trade(sig)
 
     def _enter_trade(self, sig: Signal):
+        # Geometry gate: never send an order whose stop/target are on the wrong
+        # side of entry (a buggy/garbage signal must not become a real order).
+        # Long: stop < entry < target. Short: target < entry < stop.
+        prices = (sig.entry, sig.stop, sig.target)
+        if any((p is None or p != p or p <= 0) for p in prices):  # None/NaN/<=0
+            log.warning(f"    SKIP -- non-finite price: [{sig.model}] {prices}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'invalid_price',
+                'model': sig.model, 'entry': sig.entry, 'stop': sig.stop,
+                'target': sig.target,
+            })
+            return
+        if sig.direction == 'long':
+            valid = sig.stop < sig.entry < sig.target
+        else:
+            valid = sig.target < sig.entry < sig.stop
+        if not valid:
+            log.warning(f"    SKIP -- invalid geometry: [{sig.model}] {sig.direction} "
+                        f"entry={sig.entry} stop={sig.stop} target={sig.target}")
+            self._log_decision({
+                'action': 'skip_signal', 'reason': 'invalid_geometry',
+                'model': sig.model, 'direction': sig.direction,
+                'entry': sig.entry, 'stop': sig.stop, 'target': sig.target,
+            })
+            return
+
         risk = abs(sig.entry - sig.stop)
         if risk <= 0:
             log.info(f"SKIP -- Zero risk: [{sig.model}] entry={sig.entry} stop={sig.stop}")
@@ -721,8 +769,10 @@ class LiveExecutor:
         # stop overrun / slippage can't blow the daily loss cap. 1R ≤ this ≤ DLC.
         risk_dollars = abs(sig.entry - stop_price) / TICK_SIZE * MNQ_TICK_VALUE * qty
         dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
+        # Cap the per-trade hard stop at the remaining daily budget so a single
+        # trade's backstop can never itself breach the daily loss cap.
         hard_loss_usd = min(risk_dollars * self.per_trade_hard_stop_mult,
-                            max(dlc_remaining, risk_dollars))
+                            dlc_remaining)
 
         # Submit entry + protective stop + target atomically. With a native
         # bracket the stop is live at the broker the instant the entry fills —
