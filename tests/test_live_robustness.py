@@ -93,6 +93,7 @@ def _make_executor(cfg=None, shadow=False, position_size=0, tmp_path=None):
         em.ADAPTIVE_STATE = str(tmp_path / 'adaptive.json')
         em.AUTOPSY_STATE = str(tmp_path / 'autopsy.json')
         em.ADAPTIVE_JOURNAL = str(tmp_path / 'journal.json')
+        em.DAY_OPEN_STATE = str(tmp_path / 'day_open.json')
     return exe
 
 
@@ -983,6 +984,54 @@ class TestPnLReconciliation:
                 exe._check_signals()
         exe.broker.place_bracket_entry.assert_not_called()
         assert exe.halted is False   # transient -> skip, not terminal halt
+
+    def _write_log(self, tmp_path, lines):
+        p = tmp_path / 'decisions.jsonl'
+        with open(p, 'w') as f:
+            for d in lines:
+                f.write(json.dumps(d) + '\n')
+        em.DECISION_LOG = str(p)
+
+    def test_restart_reanchors_day_open_and_adopts_broker_loss(self, tmp_path):
+        """Restart: persisted day-open restores the TRUE baseline; daily P&L takes
+        the more-negative of log sum and broker balance delta."""
+        exe = _make_executor(tmp_path=tmp_path)
+        # Persisted today's open balance = 101_000 (account up from prior days).
+        with open(tmp_path / 'day_open.json', 'w') as f:
+            json.dump({'date': '2025-05-09', 'balance': 101_000.0}, f)
+        self._write_log(tmp_path, [
+            {'action': 'trade_closed', 'timestamp': '2025-05-09T09:30:00-05:00',
+             'pnl_usd': -880.0, 'total_r': -1.3, 'model': 'ou_rev'},
+        ])
+        exe.broker.get_account_info.return_value = {'balance': 99_700.0}  # real -1300
+        now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
+        exe._reconstruct_daily_state(now_ct)
+        assert exe.reconciler.day_open_balance == 101_000.0          # TRUE day-open, not start
+        assert exe.daily_pnl_usd == -1300.0                          # broker truth (worse than log -880)
+
+    def test_restart_falls_back_to_log_without_baseline(self, tmp_path):
+        """No persisted day-open: anchor to current balance, daily P&L from log."""
+        exe = _make_executor(tmp_path=tmp_path)
+        self._write_log(tmp_path, [
+            {'action': 'trade_closed', 'timestamp': '2025-05-09T09:30:00-05:00',
+             'pnl_usd': -880.0, 'total_r': -1.3, 'model': 'ou_rev'},
+        ])
+        exe.broker.get_account_info.return_value = {'balance': 99_120.0}
+        now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
+        exe._reconstruct_daily_state(now_ct)
+        assert exe.daily_pnl_usd == -880.0
+        assert exe.reconciler.day_open_balance == 99_120.0
+
+    def test_restart_halt_state_survives(self, tmp_path):
+        exe = _make_executor(tmp_path=tmp_path)
+        self._write_log(tmp_path, [
+            {'action': 'bot_halted', 'timestamp': '2025-05-09T09:30:00-05:00',
+             'reason': 'flatten_failed'},
+        ])
+        exe.broker.get_account_info.return_value = {'balance': 100_000.0}
+        now_ct = datetime(2025, 5, 9, 10, 0, 0, tzinfo=em.CT)
+        exe._reconstruct_daily_state(now_ct)
+        assert exe.halted is True
 
     def test_clean_day_is_a_noop(self, tmp_path):
         """Flat at day open -> reconciliation does not interfere with entry flow."""

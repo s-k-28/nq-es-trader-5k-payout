@@ -54,6 +54,7 @@ ADAPTIVE_STATE = f'{STATE_DIR}/adaptive.json'
 ADAPTIVE_JOURNAL = f'{STATE_DIR}/journal.json'
 DECISION_LOG = f'{STATE_DIR}/decisions.jsonl'
 AUTOPSY_STATE = f'{STATE_DIR}/autopsy.json'
+DAY_OPEN_STATE = f'{STATE_DIR}/day_open.json'
 
 
 @dataclass
@@ -166,67 +167,10 @@ class LiveExecutor:
 
         self._check_orphan_position()
 
-        # Reconstruct daily state on mid-session restart from decision log
+        # Reconstruct daily state on mid-session restart from decision log,
+        # re-anchoring the reconciler's day-open balance to broker truth.
         now_ct = datetime.now(CT)
-        if now_ct.time() > dt_time(5, 0) and now_ct.time() < dt_time(16, 0):
-            log.info("Mid-session start detected — reconstructing daily state from decision log")
-            today_str = now_ct.strftime('%Y-%m-%d')
-            try:
-                recovered_pnl = 0.0
-                recovered_r = 0.0
-                trade_count = 0
-                recovered_model_count = {}
-                recovered_consec = 0
-                recovered_halted = False
-                if os.path.exists(DECISION_LOG):
-                    with open(DECISION_LOG, 'r') as f:
-                        for line in f:
-                            try:
-                                rec = json.loads(line.strip())
-                            except (json.JSONDecodeError, ValueError):
-                                continue
-                            ts = rec.get('timestamp', '')
-                            if not ts.startswith(today_str):
-                                continue
-                            action = rec.get('action')
-                            if action == 'trade_closed':
-                                recovered_pnl += rec.get('pnl_usd', 0.0)
-                                tr = rec.get('total_r', 0.0)
-                                recovered_r += tr
-                                trade_count += 1
-                                model = rec.get('model', '')
-                                if model:
-                                    recovered_model_count[model] = recovered_model_count.get(model, 0) + 1
-                                if tr <= -0.5:
-                                    recovered_consec += 1
-                                else:
-                                    recovered_consec = 0
-                            elif action == 'bot_halted':
-                                recovered_halted = True
-                if recovered_halted:
-                    self.halted = True
-                    log.critical("Previous session was HALTED — bot will not trade until manually cleared")
-                if trade_count > 0:
-                    self.daily_pnl_usd = recovered_pnl
-                    self.daily_r = recovered_r
-                    self.consec_losses = recovered_consec
-                    today_date = now_ct.date()
-                    for model, count in recovered_model_count.items():
-                        self.daily_model_count[(today_date, model)] = count
-                    log.warning(
-                        f"Reconstructed daily state: {trade_count} trades, "
-                        f"{recovered_r:+.2f}R, ${recovered_pnl:+,.0f}, "
-                        f"consec_losses={recovered_consec}")
-                else:
-                    log.info("No prior trades found in decision log for today")
-            except Exception:
-                log.warning("Could not reconstruct daily P&L from decision log")
-            self.cur_date = now_ct.date()
-            self._alerted_win_cap = False
-            self._alerted_dlc = False
-            self._alerted_profit_target = False
-            self._day_open_balance = self.start_balance
-        self.reconciler.day_open_balance = self.start_balance
+        self._reconstruct_daily_state(now_ct)
 
         self.guard.load_state(ADAPTIVE_STATE)
         self.analyzer.load_state(AUTOPSY_STATE)
@@ -254,6 +198,125 @@ class LiveExecutor:
             except Exception:
                 log.exception("Tick error")
             time.sleep(30)
+
+    def _persist_day_open(self, balance, date_str):
+        """Durably record today's opening balance so a restart can re-anchor the
+        reconciler to the TRUE day-open (not the overall account start)."""
+        try:
+            with open(DAY_OPEN_STATE, 'w') as f:
+                json.dump({'date': date_str, 'balance': balance}, f)
+        except Exception:
+            log.warning("Could not persist day-open balance")
+
+    def _load_day_open(self):
+        try:
+            if os.path.exists(DAY_OPEN_STATE):
+                with open(DAY_OPEN_STATE) as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return None
+
+    def _reconstruct_daily_state(self, now_ct):
+        """Mid-session restart: rebuild today's P&L/R/consec/halt from the decision
+        log AND re-anchor the reconciler's day-open balance to broker truth.
+
+        The day-open anchor is the critical part: the live reconciler measures
+        today's loss as (current_balance - day_open_balance), so day_open MUST be
+        today's opening balance, not the overall account start. We restore it from
+        the persisted day_open.json; absent that, fall back to the current broker
+        balance (best effort) so the live reconciler is at least armed going
+        forward. daily_pnl_usd is the MORE NEGATIVE of the log sum and the broker
+        balance delta when both are available.
+        """
+        if not (now_ct.time() > dt_time(5, 0) and now_ct.time() < dt_time(16, 0)):
+            # Outside the trading session: a clean _new_day will set the anchor.
+            self.reconciler.day_open_balance = self.start_balance
+            return
+
+        log.info("Mid-session start — reconstructing daily state from decision log")
+        today_str = now_ct.strftime('%Y-%m-%d')
+        log_pnl = 0.0
+        log_r = 0.0
+        trade_count = 0
+        model_count = {}
+        consec = 0
+        halted = False
+        try:
+            if os.path.exists(DECISION_LOG):
+                with open(DECISION_LOG, 'r') as f:
+                    for line in f:
+                        try:
+                            rec = json.loads(line.strip())
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                        if not rec.get('timestamp', '').startswith(today_str):
+                            continue
+                        action = rec.get('action')
+                        if action == 'trade_closed':
+                            log_pnl += rec.get('pnl_usd', 0.0)
+                            tr = rec.get('total_r', 0.0)
+                            log_r += tr
+                            trade_count += 1
+                            m = rec.get('model', '')
+                            if m:
+                                model_count[m] = model_count.get(m, 0) + 1
+                            consec = consec + 1 if tr <= -0.5 else 0
+                        elif action == 'bot_halted':
+                            halted = True
+        except Exception:
+            log.warning("Could not read decision log during reconstruction")
+
+        # Re-anchor day-open balance: prefer the persisted value for today.
+        persisted = self._load_day_open()
+        has_baseline = bool(persisted and persisted.get('date') == today_str)
+        try:
+            cur_bal = self.broker.get_account_info().get('balance')
+        except Exception:
+            cur_bal = None
+
+        if has_baseline:
+            day_open = persisted.get('balance')
+        elif cur_bal is not None:
+            day_open = cur_bal
+            log.warning("No persisted day-open balance for today — anchoring reconciler "
+                        "to current broker balance; pre-restart intraday loss may be "
+                        "unreconstructable. Live reconciliation is armed going forward.")
+        else:
+            day_open = self.start_balance
+            log.critical("No day-open baseline AND no broker balance — using start "
+                         "balance; reconciliation degraded until next broker contact")
+
+        self._day_open_balance = day_open
+        self.reconciler.day_open_balance = day_open
+
+        # Conservative daily P&L: more negative of log sum and broker balance delta.
+        daily_pnl = log_pnl
+        if has_baseline and cur_bal is not None:
+            broker_pnl = cur_bal - day_open
+            daily_pnl = min(log_pnl, broker_pnl)
+            if abs(broker_pnl - log_pnl) > 1.0:
+                log.warning(f"Reconstruction divergence: log ${log_pnl:,.0f} vs "
+                            f"broker ${broker_pnl:,.0f} -> using ${daily_pnl:,.0f}")
+
+        self.daily_pnl_usd = daily_pnl
+        self.daily_r = log_r
+        self.consec_losses = consec
+        today_date = now_ct.date()
+        for m, c in model_count.items():
+            self.daily_model_count[(today_date, m)] = c
+        if halted:
+            self.halted = True
+            log.critical("Previous session was HALTED — will not trade until manually cleared")
+        if trade_count > 0 or daily_pnl != 0.0:
+            log.warning(f"Reconstructed: {trade_count} trades, {log_r:+.2f}R, "
+                        f"${daily_pnl:+,.0f}, consec={consec}")
+        else:
+            log.info("No prior trades found for today")
+        self.cur_date = today_date
+        self._alerted_win_cap = False
+        self._alerted_dlc = False
+        self._alerted_profit_target = False
 
     def _check_orphan_position(self):
         pos_size = self.broker.position_size()
@@ -339,6 +402,7 @@ class LiveExecutor:
         bal = acct.get('balance', self.start_balance)
         self._day_open_balance = bal
         self.reconciler.day_open_balance = bal
+        self._persist_day_open(bal, str(today))
         if bal > self.peak_balance:
             self.peak_balance = bal
 
@@ -1060,6 +1124,9 @@ class LiveExecutor:
             'partial_taken': t.partial_taken,
             'partial_r_locked': round(t.partial_r_locked, 3),
             'mfe': round(t.mfe, 2),
+            # Tagged so reconstruction/audits know this P&L is a bar-close ESTIMATE
+            # booked after a failed flatten — the real exposure may differ.
+            'emergency': True,
         }
         self.reporter.report_trade(trade_record)
         self._log_decision({'action': 'trade_closed', **trade_record})
