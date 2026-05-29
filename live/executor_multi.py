@@ -566,7 +566,7 @@ class LiveExecutor:
             return
 
         try:
-            signals = self.gen.generate(self.buf, self.daily_df, None)
+            signals = self.gen.generate(self.buf, self.daily_df, None, live=True)
         except Exception:
             log.exception("Signal generation failed")
             self._log_decision({'action': 'error', 'reason': 'signal_generation_exception'})

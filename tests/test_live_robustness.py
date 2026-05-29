@@ -1445,3 +1445,44 @@ class TestSweepCurrentBarAnchoring:
         assert all(s.ts.date() == last_day2 for s in sweep_later)
         assert all(s.ts.date() != pd.Timestamp('2023-01-18').date()
                    for s in sweep_later)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 22. GENERIC LIVE SIGNAL ANCHORING (revives all time-windowed models)
+# ═══════════════════════════════════════════════════════════════════
+
+class TestGenericSignalAnchoring:
+    def _df(self, last_date='2025-05-09'):
+        return pd.DataFrame({'datetime': [
+            pd.Timestamp(f'2025-05-08 14:00:00'),
+            pd.Timestamp(f'{last_date} 09:45:00'),
+            pd.Timestamp(f'{last_date} 14:30:00'),
+        ]})
+
+    def test_drops_prior_day_signals(self):
+        from strategy.multi import anchor_to_current_day
+        sigs = [
+            make_signal(ts=pd.Timestamp('2025-05-08 14:53:00')),   # stale prior day
+            make_signal(ts=pd.Timestamp('2025-05-09 09:50:00')),   # current day
+        ]
+        out = anchor_to_current_day(sigs, self._df('2025-05-09'))
+        assert len(out) == 1
+        assert out[0].ts.date() == pd.Timestamp('2025-05-09').date()
+
+    def test_keeps_all_current_day(self):
+        from strategy.multi import anchor_to_current_day
+        sigs = [make_signal(ts=pd.Timestamp('2025-05-09 09:50:00')),
+                make_signal(ts=pd.Timestamp('2025-05-09 14:35:00'))]
+        out = anchor_to_current_day(sigs, self._df('2025-05-09'))
+        assert len(out) == 2
+
+    def test_empty_inputs_safe(self):
+        from strategy.multi import anchor_to_current_day
+        assert anchor_to_current_day([], self._df()) == []
+        assert anchor_to_current_day([make_signal()], pd.DataFrame()) != []  # no-op on empty df
+
+    def test_generate_accepts_live_flag(self):
+        # generate() must accept live= without error (wiring smoke check).
+        import inspect
+        from strategy.multi import MultiModelGenerator
+        assert 'live' in inspect.signature(MultiModelGenerator.generate).parameters

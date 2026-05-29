@@ -10,6 +10,28 @@ from strategy.models import ALL_MODELS
 from strategy.quality import filter_by_quality
 
 
+def anchor_to_current_day(signals: list[Signal], df: pd.DataFrame) -> list[Signal]:
+    """Keep only signals whose bar falls on the most-recent trading day in df.
+
+    LIVE stale-signal fix (generic, all models). The live executor re-scans a
+    multi-day rolling buffer every tick and acts on the chronologically-last
+    signal. Time-windowed models (sweep, ou_lunch, opening_drive, or_rev,
+    afternoon_momentum, trend_cont) can only fire inside intraday windows, so
+    once the clock passes that window their newest signal is a PRIOR-day bar
+    that gets re-emitted forever and rejected as stale (observed: one sweep
+    signal rejected ~357x over 3 days). Restricting to the current session means
+    a prior-day signal can never become a stale live tail. Pure no-op for
+    backtests (the generator only calls this when live=True).
+    """
+    if not signals or df is None or len(df) == 0:
+        return signals
+    last_dt = df.iloc[-1]['datetime']
+    if pd.isna(last_dt):
+        return signals
+    last_date = last_dt.date()
+    return [s for s in signals if s.ts.date() == last_date]
+
+
 class MultiModelGenerator:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -17,7 +39,8 @@ class MultiModelGenerator:
         self.models = [ModelClass(cfg) for ModelClass in ALL_MODELS]
 
     def generate(self, df: pd.DataFrame, daily: pd.DataFrame,
-                 df_es: pd.DataFrame | None = None) -> list[Signal]:
+                 df_es: pd.DataFrame | None = None,
+                 live: bool = False) -> list[Signal]:
         df = compute_vwap(df)
         df = compute_opening_range(df, minutes=15)
         df = df.reset_index(drop=True)
@@ -37,6 +60,11 @@ class MultiModelGenerator:
         filtered = [s for s in all_signals if s.ts.time() < dt_time(15, 30)]
         filtered.sort(key=lambda s: s.idx)
         resolved = self._resolve_conflicts(filtered)
+        # Live only: drop prior-day signals so no time-windowed model emits a
+        # stale tail that the executor would reject every tick. Backtest path
+        # (live=False) is provably unchanged.
+        if live:
+            resolved = anchor_to_current_day(resolved, df)
         return filter_by_quality(resolved, df)
 
     def _apply_atr_hybrid_wider(self, signals: list[Signal],
