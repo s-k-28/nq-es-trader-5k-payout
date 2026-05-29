@@ -29,6 +29,12 @@ class SweepReversalModel(BaseModel):
         )
         super().__init__(cfg, rp)
 
+    # Max bars a *live* rolling buffer is ever trimmed to (see
+    # live/executor_multi.py `_merge_bars`, which caps self.buf at 30000 bars
+    # ~= 20-21 RTH sessions). A backtest df is the full multi-year history and
+    # is far larger, so this acts as a reliable "am I a live tail?" guard.
+    _LIVE_BUFFER_MAX_BARS = 30000
+
     def generate(self, df: pd.DataFrame, daily: pd.DataFrame,
                  context: dict) -> list[Signal]:
         daily_map = context['daily_map']
@@ -101,7 +107,44 @@ class SweepReversalModel(BaseModel):
                 signals.append(sig)
                 used += 1
 
-        return signals
+        return self._anchor_to_current_bar(signals, df)
+
+    def _anchor_to_current_bar(self, signals: list[Signal],
+                               df: pd.DataFrame) -> list[Signal]:
+        """Drop signals that are not anchored to the buffer's current day.
+
+        Root-cause fix for the live stale-signal bug: the live executor
+        (live/executor_multi.py) re-scans a multi-DAY rolling buffer every tick
+        and acts on the chronologically-last signal (`signals[-1]`). Because the
+        sweep model can only fire inside two intraday windows (9:45-11:00 /
+        14:00-15:00), its newest-possible signal is structurally clamped to a
+        past in-window bar. Once the live clock advances past that window/day,
+        no newer sweep signal supersedes it, so the SAME historical bar is
+        re-emitted as the tail and rejected as stale on every tick forever
+        (observed: a 2026-05-22 14:53 signal rejected ~357x over ~3 days).
+
+        Fix: when running against a live rolling buffer, only return signals
+        whose confirmation bar falls on the most-recent trading day in the
+        buffer — i.e. anchored to the current/just-closed bar's session rather
+        than a stale prior day. The model's entry/stop/target/window logic (its
+        edge) is untouched; this only suppresses cross-day-stale emissions.
+
+        No-op for backtests: a backtest passes the full multi-year history in a
+        single call (far more than `_LIVE_BUFFER_MAX_BARS` bars), where signals
+        are consumed by the simulator at their own `ts`; the guard below leaves
+        that path's signal list byte-for-byte identical.
+        """
+        if not signals or df is None or len(df) == 0:
+            return signals
+        # Only anchor when this looks like a live rolling buffer, never for a
+        # large historical backtest dataframe.
+        if len(df) > self._LIVE_BUFFER_MAX_BARS:
+            return signals
+        last_dt = df.iloc[-1]['datetime']
+        if pd.isna(last_dt):
+            return signals
+        last_date = last_dt.date()
+        return [s for s in signals if s.ts.date() == last_date]
 
     def _check_bearish_sweep(self, idx, bar, prev1, pdh, session_high,
                              sh_idx, vwap, regime, levels):

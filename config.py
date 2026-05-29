@@ -8,6 +8,12 @@ class InstrumentConfig:
     tick_size: float = 0.25
     tick_value: float = 5.0
     point_value: float = 20.0
+    # Live-execution instrument (the live bot trades MNQ, the micro contract).
+    # These are intentionally distinct from the NQ tick_value/point_value above
+    # so the live executor's sizing/PnL math stays MNQ-correct ($0.50/tick,
+    # $2/point) while backtest/regime code continues to use the NQ values.
+    live_tick_value: float = 0.50
+    live_point_value: float = 2.0
 
 
 @dataclass
@@ -54,6 +60,8 @@ class RiskParams:
     stop_buffer_ticks: int = 3
     min_risk_ticks: int = 40
     max_risk_ticks: int = 200
+    # System-wide hard cap on contracts per position (matches backtest + paper).
+    max_contracts: int = 20
     be_trigger_rr: float = 0.8
     partial_rr: float = 0.5
     partial_pct: float = 0.0

@@ -42,6 +42,11 @@ from live.reconciler import PnLReconciler
 
 log = logging.getLogger(__name__)
 
+# Module-level instrument/risk constants. These remain as module globals for
+# backward compatibility, but the live executor now reads the corresponding
+# fields from cfg (cfg.instrument.tick_size, cfg.instrument.live_tick_value,
+# cfg.risk.max_contracts, cfg.risk.min_risk_ticks) so config is authoritative.
+# The defaults below intentionally MATCH the cfg defaults (MNQ: $0.50/tick).
 TICK_SIZE = 0.25
 MNQ_TICK_VALUE = 0.50
 MAX_CONTRACTS = 20
@@ -49,7 +54,10 @@ MIN_RISK_TICKS = 40
 CT = ZoneInfo('America/Chicago')
 ENTRY_TIMEOUT_SEC = 60
 GLOBEX_MODE = os.getenv('GLOBEX_MODE', '').strip() == '1'
-STATE_DIR = 'live/state'
+# State directory: overridable per-process via FLEET_STATE_DIR so each account
+# in a fleet gets an isolated state dir. Read at import; the 5 derived paths
+# below stay module-level globals (tests rebind them as em.DECISION_LOG etc.).
+STATE_DIR = os.getenv('FLEET_STATE_DIR', 'live/state')
 ADAPTIVE_STATE = f'{STATE_DIR}/adaptive.json'
 ADAPTIVE_JOURNAL = f'{STATE_DIR}/journal.json'
 DECISION_LOG = f'{STATE_DIR}/decisions.jsonl'
@@ -86,6 +94,14 @@ class LiveTrade:
 class LiveExecutor:
     def __init__(self, cfg: Config, broker, shadow: bool = False):
         self.cfg = cfg
+        # Config-authoritative instrument/risk parameters. Sourced from cfg with
+        # the historical hardcoded constants as defaults (MNQ: $0.50/tick, 0.25
+        # tick size, 20-contract cap, 40-tick min risk). Cached here because they
+        # are fixed for the life of the process.
+        self.tick_size = getattr(cfg.instrument, 'tick_size', TICK_SIZE)
+        self.tick_value = getattr(cfg.instrument, 'live_tick_value', MNQ_TICK_VALUE)
+        self.max_contracts = getattr(cfg.risk, 'max_contracts', MAX_CONTRACTS)
+        self.min_risk_ticks = cfg.risk.min_risk_ticks
         self.broker = broker
         self.shadow = shadow
         self.reporter = HubReporter()
@@ -628,22 +644,22 @@ class LiveExecutor:
             })
             return
 
-        if sig.risk_ticks < self.cfg.risk.min_risk_ticks:
+        if sig.risk_ticks < self.min_risk_ticks:
             log.info(f"    SKIP -- stop too tight: {sig.risk_ticks:.0f} ticks "
-                     f"(min {self.cfg.risk.min_risk_ticks})")
+                     f"(min {self.min_risk_ticks})")
             self._log_decision({
                 'action': 'skip_signal', 'reason': 'stop_too_tight',
                 'model': sig.model, 'risk_ticks': sig.risk_ticks,
-                'min_risk_ticks': self.cfg.risk.min_risk_ticks,
+                'min_risk_ticks': self.min_risk_ticks,
             })
             return
 
-        risk_per_contract = sig.risk_ticks * MNQ_TICK_VALUE
+        risk_per_contract = sig.risk_ticks * self.tick_value
         if risk_per_contract <= 0:
             return
 
         model_risk = self.cfg.funded.model_risk_dollars.get(sig.model, 400)
-        qty = min(MAX_CONTRACTS, int(model_risk / risk_per_contract))
+        qty = min(self.max_contracts, int(model_risk / risk_per_contract))
         if qty <= 0:
             log.info(f"    SKIP -- qty=0: risk_per_contract=${risk_per_contract:.2f} > model_risk=${model_risk}")
             self._log_decision({
@@ -688,9 +704,9 @@ class LiveExecutor:
             qty = scaled_qty
 
         dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
-        potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
+        potential_loss = sig.risk_ticks * self.tick_value * qty
         if potential_loss > dlc_remaining:
-            max_qty = int(dlc_remaining / (sig.risk_ticks * MNQ_TICK_VALUE))
+            max_qty = int(dlc_remaining / (sig.risk_ticks * self.tick_value))
             if max_qty <= 0:
                 log.info(f"    SKIP -- DLC exhausted: P&L ${self.daily_pnl_usd:,.0f}, "
                          f"remaining ${dlc_remaining:,.0f}")
@@ -703,7 +719,7 @@ class LiveExecutor:
             log.info(f"    DLC scale: {qty} -> {max_qty} MNQ "
                      f"(remaining ${dlc_remaining:,.0f})")
             qty = max_qty
-            potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
+            potential_loss = sig.risk_ticks * self.tick_value * qty
 
         if self.daily_pnl_usd >= self.cfg.funded.green_day_protect:
             gd_scale = self.cfg.funded.green_day_protect_scale
@@ -712,7 +728,7 @@ class LiveExecutor:
                 log.info(f"    GREEN DAY PROTECT: {qty} -> {gd_qty} MNQ "
                          f"(up ${self.daily_pnl_usd:,.0f}, protecting green day)")
                 qty = gd_qty
-                potential_loss = sig.risk_ticks * MNQ_TICK_VALUE * qty
+                potential_loss = sig.risk_ticks * self.tick_value * qty
 
         log.info(f"\n>>> SIGNAL: [{sig.model}] {sig.direction.upper()} "
                  f"@ {sig.entry:.2f} ({qty} MNQ, ${model_risk} risk tier)")
@@ -723,15 +739,15 @@ class LiveExecutor:
             sig.model, sig.direction, sig.entry,
             sig.stop, sig.target, sig.rr, sig.risk_ticks)
 
-        actual_risk_ticks = abs(sig.entry - sig.stop) / TICK_SIZE
+        actual_risk_ticks = abs(sig.entry - sig.stop) / self.tick_size
         stop_price = sig.stop
-        if actual_risk_ticks < MIN_RISK_TICKS:
+        if actual_risk_ticks < self.min_risk_ticks:
             if sig.direction == 'long':
-                stop_price = sig.entry - MIN_RISK_TICKS * TICK_SIZE
+                stop_price = sig.entry - self.min_risk_ticks * self.tick_size
             else:
-                stop_price = sig.entry + MIN_RISK_TICKS * TICK_SIZE
-            stop_price = round(stop_price / TICK_SIZE) * TICK_SIZE
-            log.warning(f"    STOP WIDENED: {actual_risk_ticks:.0f} -> {MIN_RISK_TICKS} ticks "
+                stop_price = sig.entry + self.min_risk_ticks * self.tick_size
+            stop_price = round(stop_price / self.tick_size) * self.tick_size
+            log.warning(f"    STOP WIDENED: {actual_risk_ticks:.0f} -> {self.min_risk_ticks} ticks "
                         f"({sig.stop:.2f} -> {stop_price:.2f})")
 
         self._log_decision({
@@ -767,7 +783,7 @@ class LiveExecutor:
 
         # Per-trade hard-loss backstop: bound a single trade's worst case so a
         # stop overrun / slippage can't blow the daily loss cap. 1R ≤ this ≤ DLC.
-        risk_dollars = abs(sig.entry - stop_price) / TICK_SIZE * MNQ_TICK_VALUE * qty
+        risk_dollars = abs(sig.entry - stop_price) / self.tick_size * self.tick_value * qty
         dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
         # Cap the per-trade hard stop at the remaining daily budget so a single
         # trade's backstop can never itself breach the daily loss cap.
@@ -891,7 +907,7 @@ class LiveExecutor:
             adverse_pts = ((t.entry_price - bar['low']) if is_long
                            else (bar['high'] - t.entry_price))
             open_loss_usd = (max(0.0, adverse_pts)
-                             * (MNQ_TICK_VALUE / TICK_SIZE) * t.contracts)
+                             * (self.tick_value / self.tick_size) * t.contracts)
             if open_loss_usd >= t.hard_loss_usd:
                 log.critical(f"    HARD STOP -- open loss ${open_loss_usd:,.0f} >= "
                              f"cap ${t.hard_loss_usd:,.0f}, force-flattening")
@@ -924,7 +940,7 @@ class LiveExecutor:
                     new_stop = t.entry_price + t.mfe - trail_dist
                     if new_stop > t.stop_price:
                         prev_stop = t.stop_price
-                        t.stop_price = round(new_stop / TICK_SIZE) * TICK_SIZE
+                        t.stop_price = round(new_stop / self.tick_size) * self.tick_size
                         if not self.shadow:
                             if not self.broker.modify_stop(t.stop_price):
                                 log.warning(f"    Trail stop advance FAILED, reverting stop {t.stop_price} → {prev_stop}")
@@ -935,7 +951,7 @@ class LiveExecutor:
                     new_stop = t.entry_price - t.mfe + trail_dist
                     if new_stop < t.stop_price:
                         prev_stop = t.stop_price
-                        t.stop_price = round(new_stop / TICK_SIZE) * TICK_SIZE
+                        t.stop_price = round(new_stop / self.tick_size) * self.tick_size
                         if not self.shadow:
                             if not self.broker.modify_stop(t.stop_price):
                                 log.warning(f"    Trail stop advance FAILED, reverting stop {t.stop_price} → {prev_stop}")
@@ -1147,13 +1163,13 @@ class LiveExecutor:
         if bar is not None and t.risk > 0:
             is_long = t.direction == 'long'
             raw = (bar['close'] - t.entry_price) if is_long else (t.entry_price - bar['close'])
-            raw -= TICK_SIZE * 0.25
+            raw -= self.tick_size * 0.25
             est_r = raw / t.risk
             if t.partial_taken and t.partial_r_locked > 0:
                 rp = t.signal.risk_profile
                 partial_pct = rp.partial_pct if rp else self.cfg.risk.partial_pct
                 est_r = t.partial_r_locked + (1 - partial_pct) * est_r
-            est_pnl = est_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
+            est_pnl = est_r * t.risk * t.contracts * self.tick_value / self.tick_size
         self.daily_r += est_r
         self.daily_pnl_usd += est_pnl
         if est_r <= -0.5:
@@ -1213,7 +1229,7 @@ class LiveExecutor:
             total_r = raw_r
 
         # Derive dollar P&L from total_r (matches _close_trade path)
-        pnl = total_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
+        pnl = total_r * t.risk * t.contracts * self.tick_value / self.tick_size
 
         self.daily_r += total_r
         self.daily_pnl_usd += pnl
@@ -1322,7 +1338,7 @@ class LiveExecutor:
                 raw_pnl = (bar['close'] - t.entry_price)
             else:
                 raw_pnl = (t.entry_price - bar['close'])
-            slip = TICK_SIZE * 0.25
+            slip = self.tick_size * 0.25
             raw_pnl -= slip  # pessimize exit by 0.25 ticks (matches backtest)
             raw_r = raw_pnl / t.risk if t.risk > 0 else 0
 
@@ -1337,7 +1353,7 @@ class LiveExecutor:
             total_r = 0
 
         self.daily_r += total_r
-        pnl_usd = total_r * t.risk * t.contracts * MNQ_TICK_VALUE / TICK_SIZE
+        pnl_usd = total_r * t.risk * t.contracts * self.tick_value / self.tick_size
         self.daily_pnl_usd += pnl_usd
 
         if total_r <= -0.5:

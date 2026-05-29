@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "Multi-account fleet manifest. Each account runs as its own OS subprocess",
+    "with an isolated FLEET_STATE_DIR (live/fleet/<name>). Run with:",
+    "  python3 run_fleet.py --config fleet_config.json",
+    "IB NOTE: each IB account needs a UNIQUE (host, port, client_id) triple.",
+    "One IB Gateway typically serves one funded account; multiple IB accounts",
+    "generally require separate Gateways on distinct ports.",
+    "Secrets may be left out here and supplied via ambient env / .env instead",
+    "(TopStep validation, however, requires explicit user+api_key per account)."
+  ],
+  "accounts": [
+    {
+      "name": "ib_paper_1",
+      "broker": "ib",
+      "host": "127.0.0.1",
+      "port": 4002,
+      "client_id": 11,
+      "shadow": false
+    },
+    {
+      "name": "ib_paper_2",
+      "broker": "ib",
+      "host": "127.0.0.1",
+      "port": 4012,
+      "client_id": 12,
+      "shadow": false
+    },
+    {
+      "name": "topstep_eval_1",
+      "broker": "topstep",
+      "topstep_env": "demo",
+      "topstep_user": "REPLACE_ME",
+      "topstep_api_key": "REPLACE_ME",
+      "topstep_account_id": 12345678,
+      "shadow": false
+    }
+  ]
+}

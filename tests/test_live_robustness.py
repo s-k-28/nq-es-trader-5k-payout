@@ -1172,3 +1172,276 @@ class TestBarSanity:
         df.loc[1, 'open'] = 0.0
         clean = em.LiveExecutor._sanitize_bars(df)
         assert len(clean) == 1   # only the third row survives
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 22. CONFIG-AUTHORITATIVE INSTRUMENT / RISK PARAMETERS
+# ═══════════════════════════════════════════════════════════════════
+
+class TestConfigAuthoritative:
+    def test_defaults_match_legacy_constants(self):
+        """Default cfg must reproduce the historical MNQ hardcoded constants so
+        live sizing/PnL math is unchanged."""
+        exe = _make_executor()
+        assert exe.tick_size == em.TICK_SIZE == 0.25
+        assert exe.tick_value == em.MNQ_TICK_VALUE == 0.50
+        assert exe.max_contracts == em.MAX_CONTRACTS == 20
+        assert exe.min_risk_ticks == em.MIN_RISK_TICKS == 40
+
+    def test_sizing_reads_cfg_tick_value(self):
+        """A custom cfg.instrument.live_tick_value drives the sizing math."""
+        cfg = Config()
+        cfg.instrument.live_tick_value = 1.0  # double dollar-per-tick
+        exe = _make_executor(cfg=cfg)
+        assert exe.tick_value == 1.0
+        # risk_per_contract = risk_ticks * tick_value -> fewer contracts fit
+        # the model_risk budget than with the 0.50 default.
+        sig = make_signal(model='ou_rev', entry=20000.0, stop=19950.0,
+                          target=20150.0)
+        exe.guard = MagicMock()
+        exe.guard.pre_entry_check.return_value = (1.0, [])
+        exe.analyzer = MagicMock()
+        exe.analyzer.should_block_regime.return_value = (False, '')
+        exe.analyzer.get_recent_failure_pattern.return_value = None
+        now_ct = datetime(2025, 5, 9, 10, 0, 30, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            exe._enter_trade(sig)
+        # 200-tick risk * $1/tick = $200/contract; ou_rev budget $500 -> 2 cts.
+        assert exe.trade is not None
+        assert exe.trade.contracts == 2
+
+    def test_max_contracts_cap_from_cfg(self):
+        """cfg.risk.max_contracts caps position size."""
+        cfg = Config()
+        cfg.risk.max_contracts = 3
+        cfg.instrument.live_tick_value = 0.50
+        exe = _make_executor(cfg=cfg)
+        assert exe.max_contracts == 3
+        # Tiny risk + big budget would size huge, but the cap clamps it.
+        sig = make_signal(model='trend', entry=20000.0, stop=19990.0,
+                          target=20300.0)  # 40-tick risk
+        exe.guard = MagicMock()
+        exe.guard.pre_entry_check.return_value = (1.0, [])
+        exe.analyzer = MagicMock()
+        exe.analyzer.should_block_regime.return_value = (False, '')
+        exe.analyzer.get_recent_failure_pattern.return_value = None
+        now_ct = datetime(2025, 5, 9, 10, 0, 30, tzinfo=em.CT)
+        with patch('live.executor_multi.datetime') as mock_dt:
+            mock_dt.now.return_value = now_ct
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            exe._enter_trade(sig)
+        assert exe.trade is not None
+        assert exe.trade.contracts == 3
+
+    def test_min_risk_ticks_from_cfg_widens_stop(self):
+        """Stop-widening uses cfg.risk.min_risk_ticks (unified with skip gate)."""
+        cfg = Config()
+        cfg.risk.min_risk_ticks = 40
+        exe = _make_executor(cfg=cfg)
+        assert exe.min_risk_ticks == 40
+
+
+class TestFleetStateDir:
+    def test_state_dir_defaults_to_live_state(self):
+        """Absent FLEET_STATE_DIR, STATE_DIR defaults to 'live/state'."""
+        import importlib
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('FLEET_STATE_DIR', None)
+            mod = importlib.reload(em)
+            assert mod.STATE_DIR == 'live/state'
+            assert mod.DECISION_LOG == 'live/state/decisions.jsonl'
+            assert mod.ADAPTIVE_STATE == 'live/state/adaptive.json'
+
+    def test_fleet_state_dir_overrides_at_import(self, tmp_path):
+        """FLEET_STATE_DIR overrides STATE_DIR and all derived path globals."""
+        import importlib
+        target = str(tmp_path / 'acct_A')
+        try:
+            with patch.dict(os.environ, {'FLEET_STATE_DIR': target}):
+                mod = importlib.reload(em)
+                assert mod.STATE_DIR == target
+                assert mod.DECISION_LOG == f'{target}/decisions.jsonl'
+                assert mod.ADAPTIVE_STATE == f'{target}/adaptive.json'
+                assert mod.AUTOPSY_STATE == f'{target}/autopsy.json'
+                assert mod.DAY_OPEN_STATE == f'{target}/day_open.json'
+                assert mod.ADAPTIVE_JOURNAL == f'{target}/journal.json'
+        finally:
+            # ALWAYS restore module to default state — even if an assertion above
+            # fails — so a failure here can't poison em.STATE_DIR for later tests.
+            os.environ.pop('FLEET_STATE_DIR', None)
+            importlib.reload(em)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# SWEEP MODEL — stale-signal / current-bar anchoring fix
+# ═══════════════════════════════════════════════════════════════════
+#
+# Root cause (observed live): the executor re-scans a multi-DAY rolling buffer
+# every tick and acts on signals[-1]. The sweep model only fires inside two
+# intraday windows (9:45-11:00 / 14:00-15:00), so its newest-possible signal is
+# structurally clamped to a past in-window bar. Once the clock passes that
+# window/day, the SAME historical bar is re-emitted as the tail forever and
+# rejected as stale (a 2026-05-22 14:53 signal was rejected ~357x over 3 days).
+#
+# Fix lives in SweepReversalModel._anchor_to_current_bar: for a live-shaped
+# rolling buffer, only return signals whose confirmation bar is on the buffer's
+# most-recent trading day. No-op for the large single-pass backtest df.
+
+from strategy.models.sweep_reversal import SweepReversalModel
+from strategy.multi import MultiModelGenerator
+
+
+def _sweep_sig(model_name, ts, direction='short'):
+    """Build a geometry-valid sweep Signal stamped at ts."""
+    if direction == 'short':
+        entry, stop, target = 20000.0, 20060.0, 19850.0
+    else:
+        entry, stop, target = 20000.0, 19940.0, 20150.0
+    risk = abs(entry - stop)
+    reward = abs(target - entry)
+    return Signal(
+        idx=0, ts=pd.Timestamp(ts), model=model_name, direction=direction,
+        entry=entry, stop=stop, target=target,
+        risk_ticks=risk / 0.25, reward_ticks=reward / 0.25,
+        rr=reward / risk, tag='sweep_test', priority=35,
+        risk_profile=ModelRiskProfile(),
+    )
+
+
+def _live_buffer(rows):
+    """Minimal OHLC buffer with the given (datetime) rows."""
+    return pd.DataFrame({
+        'datetime': [pd.Timestamp(r) for r in rows],
+        'open': [1.0] * len(rows), 'high': [1.0] * len(rows),
+        'low': [1.0] * len(rows), 'close': [1.0] * len(rows),
+        'volume': [1] * len(rows),
+    })
+
+
+class TestSweepCurrentBarAnchoring:
+    def test_stale_prior_day_signal_is_dropped_on_live_buffer(self, cfg):
+        """A sweep signal from a PRIOR day must not survive as the live tail.
+
+        This is the exact bug: a 14:53 sweep from days ago kept being re-emitted
+        as signals[-1] and rejected as stale on every tick.
+        """
+        model = SweepReversalModel(cfg)
+        # Live-shaped buffer: last bar is on day 2, well under the buffer cap.
+        df = _live_buffer(['2025-05-09 14:53', '2025-05-12 10:05'])
+        sigs = [
+            _sweep_sig('sweep', '2025-05-09 14:53'),   # stale prior-day tail
+            _sweep_sig('sweep', '2025-05-12 09:47'),   # fresh, current day
+        ]
+        out = model._anchor_to_current_bar(sigs, df)
+        # Only the current-day signal survives.
+        assert len(out) == 1
+        assert out[-1].ts.date() == df['datetime'].iloc[-1].date()
+        assert str(out[-1].ts) == '2025-05-12 09:47:00'
+
+    def test_fresh_signal_ts_matches_recent_bar(self, cfg):
+        """A fresh sweep signal's ts is anchored to the buffer's current day."""
+        model = SweepReversalModel(cfg)
+        df = _live_buffer(['2025-05-12 09:30', '2025-05-12 09:47', '2025-05-12 10:00'])
+        sigs = [_sweep_sig('sweep', '2025-05-12 09:47')]
+        out = model._anchor_to_current_bar(sigs, df)
+        assert len(out) == 1
+        # The surviving signal's date equals the most-recent bar's date.
+        assert out[-1].ts.date() == df['datetime'].iloc[-1].date()
+
+    def test_no_signal_when_only_stale_signals_exist(self, cfg):
+        """If every signal is from a prior day, the live tail is empty (not stale)."""
+        model = SweepReversalModel(cfg)
+        df = _live_buffer(['2025-05-09 14:53', '2025-05-12 11:30'])
+        sigs = [_sweep_sig('sweep', '2025-05-09 14:53')]
+        out = model._anchor_to_current_bar(sigs, df)
+        assert out == []
+
+    def test_large_backtest_buffer_is_noop(self, cfg):
+        """A full historical df (> live cap) is returned unchanged — edge intact."""
+        model = SweepReversalModel(cfg)
+        n = model._LIVE_BUFFER_MAX_BARS + 1
+        df = _live_buffer(['2025-05-12 10:00'] * n)
+        sigs = [
+            _sweep_sig('sweep', '2025-05-09 14:53'),
+            _sweep_sig('sweep', '2025-05-12 09:47'),
+        ]
+        out = model._anchor_to_current_bar(sigs, df)
+        assert out is sigs  # identical list object, untouched
+
+    def test_empty_inputs_are_safe(self, cfg):
+        model = SweepReversalModel(cfg)
+        df = _live_buffer(['2025-05-12 10:00'])
+        assert model._anchor_to_current_bar([], df) == []
+        empty_df = pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+        sigs = [_sweep_sig('sweep', '2025-05-12 09:47')]
+        assert model._anchor_to_current_bar(sigs, empty_df) is sigs
+
+    def test_backtest_signal_count_preserved_via_generator(self, cfg):
+        """End-to-end: a multi-year backtest df keeps every sweep signal it had.
+
+        Uses real data when available; otherwise skips (CI-safe).
+        """
+        import os
+        path = 'data/Dataset_NQ_1min_2022_2025.csv'
+        if not os.path.exists(path):
+            pytest.skip('historical dataset not present')
+        raw = pd.read_csv(path, nrows=200000)
+        raw = raw.rename(columns={raw.columns[0]: 'datetime'}) \
+            if 'datetime' not in raw.columns else raw
+        raw['datetime'] = pd.to_datetime(raw['datetime'])
+        raw = raw[['datetime', 'open', 'high', 'low', 'close', 'volume']].copy()
+        tmp = raw.copy()
+        tmp['date'] = tmp['datetime'].dt.date
+        daily = tmp.groupby('date').agg(
+            open=('open', 'first'), high=('high', 'max'),
+            low=('low', 'min'), close=('close', 'last'),
+            volume=('volume', 'sum')).reset_index()
+        daily['date'] = pd.to_datetime(daily['date'])
+        gen = MultiModelGenerator(cfg)
+        sigs = gen.generate(raw, daily, None)
+        sweep_dates = {s.ts.date() for s in sigs if s.model == 'sweep'}
+        # The backtest must retain sweep signals spanning MANY days — proof the
+        # current-bar anchoring did not collapse the list to a single day.
+        assert len(sweep_dates) > 1
+
+    def test_live_tail_anchors_to_current_day_via_generator(self, cfg):
+        """End-to-end live-tail: a real sweep day keeps its signal, and ending
+        on a later non-sweep day drops the now-stale prior-day signal."""
+        import os
+        path = 'data/Dataset_NQ_1min_2022_2025.csv'
+        if not os.path.exists(path):
+            pytest.skip('historical dataset not present')
+        full = pd.read_csv(path, nrows=60000)
+        full = full.rename(columns={full.columns[0]: 'datetime'}) \
+            if 'datetime' not in full.columns else full
+        full['datetime'] = pd.to_datetime(full['datetime'])
+        full = full[['datetime', 'open', 'high', 'low', 'close', 'volume']].copy()
+
+        def run(end_date):
+            mask = full['datetime'].dt.date <= pd.Timestamp(end_date).date()
+            buf = full.loc[mask].tail(29000).reset_index(drop=True).copy()
+            tmp = buf.copy()
+            tmp['date'] = tmp['datetime'].dt.date
+            daily = tmp.groupby('date').agg(
+                open=('open', 'first'), high=('high', 'max'),
+                low=('low', 'min'), close=('close', 'last'),
+                volume=('volume', 'sum')).reset_index()
+            daily['date'] = pd.to_datetime(daily['date'])
+            gen = MultiModelGenerator(cfg)
+            sigs = gen.generate(buf, daily, None)
+            sweep = [s for s in sigs if s.model == 'sweep']
+            return buf['datetime'].iloc[-1].date(), sweep
+
+        # Buffer ending ON the known sweep day keeps the current-day signal.
+        last_day, sweep_on_day = run('2023-01-18')
+        assert all(s.ts.date() == last_day for s in sweep_on_day)
+        assert any(s.ts.date() == last_day for s in sweep_on_day), \
+            'expected a sweep signal on its own day'
+
+        # Buffer ending a week LATER (non-sweep day) drops the stale 01-18 tail.
+        last_day2, sweep_later = run('2023-01-25')
+        assert all(s.ts.date() == last_day2 for s in sweep_later)
+        assert all(s.ts.date() != pd.Timestamp('2023-01-18').date()
+                   for s in sweep_later)
