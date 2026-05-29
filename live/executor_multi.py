@@ -785,10 +785,17 @@ class LiveExecutor:
         # stop overrun / slippage can't blow the daily loss cap. 1R ≤ this ≤ DLC.
         risk_dollars = abs(sig.entry - stop_price) / self.tick_size * self.tick_value * qty
         dlc_remaining = self.dollar_loss_cap + self.daily_pnl_usd
-        # Cap the per-trade hard stop at the remaining daily budget so a single
-        # trade's backstop can never itself breach the daily loss cap.
-        hard_loss_usd = min(risk_dollars * self.per_trade_hard_stop_mult,
-                            dlc_remaining)
+        # Per-trade hard stop: capped at remaining daily budget (so the backstop
+        # can't itself breach the cap) but FLOORED at 1R so it is never disabled.
+        # The min_risk_ticks + DLC sizing gates already guarantee
+        # dlc_remaining >= risk_dollars here, so the floor is a no-op in normal
+        # flow — it's defense-in-depth against a future gate-ordering change that
+        # could otherwise leave hard_loss_usd <= 0 and silently turn the backstop
+        # off on the worst (near-cap) trade.
+        hard_loss_usd = max(
+            min(risk_dollars * self.per_trade_hard_stop_mult, dlc_remaining),
+            risk_dollars,
+        )
 
         # Submit entry + protective stop + target atomically. With a native
         # bracket the stop is live at the broker the instant the entry fills —
