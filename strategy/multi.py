@@ -56,6 +56,7 @@ class MultiModelGenerator:
             all_signals.extend(sigs)
 
         all_signals = self._apply_atr_hybrid_wider(all_signals, df)
+        all_signals = self._filter_disabled(all_signals)
 
         filtered = [s for s in all_signals if s.ts.time() < dt_time(15, 30)]
         filtered.sort(key=lambda s: s.idx)
@@ -66,6 +67,15 @@ class MultiModelGenerator:
         if live:
             resolved = anchor_to_current_day(resolved, df)
         return filter_by_quality(resolved, df)
+
+    def _filter_disabled(self, signals: list[Signal]) -> list[Signal]:
+        """Drop signals whose model_direction is in cfg.risk.disabled_combos
+        (operational kill-switch; default empty = no-op)."""
+        disabled = set(getattr(self.cfg.risk, 'disabled_combos', ()) or ())
+        if not disabled:
+            return signals
+        return [s for s in signals
+                if f"{s.model}_{s.direction}" not in disabled]
 
     def _apply_atr_hybrid_wider(self, signals: list[Signal],
                                 df: pd.DataFrame) -> list[Signal]:

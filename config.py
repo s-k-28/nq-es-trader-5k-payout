@@ -68,6 +68,12 @@ class RiskParams:
     target_rr: float = 3.0
     min_rr: float = 2.0
     max_concurrent: int = 1
+    # Operational kill-switch: model_direction combos to suppress (e.g.
+    # ('vwap_rev_short',)). Default empty — a 3yr walk-forward found NO combo
+    # with a statistically significant negative edge; vwap_rev_short (-0.13R,
+    # t=-0.82, n=41) is the lone watch-item but cutting it on that weak signal
+    # would be overfitting. Populate only if a combo stays negative with more data.
+    disabled_combos: tuple = ()
     consec_loss_cooldown: int = 10
     no_friday_pm: bool = True
 

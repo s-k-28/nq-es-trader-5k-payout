@@ -1486,3 +1486,31 @@ class TestGenericSignalAnchoring:
         import inspect
         from strategy.multi import MultiModelGenerator
         assert 'live' in inspect.signature(MultiModelGenerator.generate).parameters
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 23. DISABLED-COMBOS KILL-SWITCH
+# ═══════════════════════════════════════════════════════════════════
+
+class TestDisabledCombos:
+    def _gen(self, disabled):
+        from strategy.multi import MultiModelGenerator
+        cfg = Config()
+        cfg.risk.disabled_combos = disabled
+        with patch('strategy.multi.compute_vwap'), patch('strategy.multi.compute_opening_range'):
+            return MultiModelGenerator(cfg)
+
+    def test_default_empty_is_noop(self):
+        gen = self._gen(())
+        sigs = [make_signal(model='vwap_rev', direction='short'),
+                make_signal(model='ou_rev', direction='long')]
+        assert len(gen._filter_disabled(sigs)) == 2
+
+    def test_disabled_combo_is_dropped(self):
+        gen = self._gen(('vwap_rev_short',))
+        sigs = [make_signal(model='vwap_rev', direction='short'),   # dropped
+                make_signal(model='vwap_rev', direction='long'),    # kept
+                make_signal(model='ou_rev', direction='long')]      # kept
+        out = gen._filter_disabled(sigs)
+        assert len(out) == 2
+        assert all(f"{s.model}_{s.direction}" != 'vwap_rev_short' for s in out)
