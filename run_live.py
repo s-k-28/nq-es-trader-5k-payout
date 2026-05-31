@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from config import Config, InstrumentConfig
 from live.broker_topstep import TopStepBroker
 from live.executor_multi import LiveExecutor
+from tiers import apply_tier, VALID_TIERS, TIER_VALIDATION
 
 load_dotenv()
 
@@ -30,6 +31,8 @@ def main():
                    choices=['demo', 'live'])
     p.add_argument('--shadow', action='store_true',
                    help='Run in shadow mode (no orders placed, full decision logging)')
+    p.add_argument('--tier', default=None, choices=VALID_TIERS,
+                   help='Apply an account-tier preset (25k/50k/100k/150k)')
     args = p.parse_args()
 
     username = os.getenv('TOPSTEP_USER')
@@ -44,6 +47,12 @@ def main():
 
     cfg = Config()
     cfg.instrument = InstrumentConfig('MNQ', 0.25, 0.50, 2.0)
+    if args.tier:
+        apply_tier(cfg, args.tier)
+        v = TIER_VALIDATION[args.tier]
+        print(f"  TIER {args.tier.upper()}: DLC ${cfg.funded.dollar_loss_cap:,.0f} | "
+              f"trailing DD ${cfg.funded.trailing_dd:,.0f} | max {cfg.risk.max_contracts} MNQ | "
+              f"MC ~{v['survival_pct']:.0f}% survival, ~${v['monthly_usd']:,}/mo (proper risk)")
 
     risk_tiers = cfg.funded.model_risk_dollars
 

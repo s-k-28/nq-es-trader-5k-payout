@@ -13,6 +13,7 @@ from data.loader import load_csv, build_daily_bars
 from strategy.multi import MultiModelGenerator
 from backtest.engine_v2 import BacktestEngineV2
 from backtest.metrics_v2 import MetricsV2
+from tiers import apply_tier, VALID_TIERS
 
 
 def main():
@@ -26,11 +27,16 @@ def main():
     p.add_argument('--risk', type=float, default=1.0)
     p.add_argument('--plot', default=None)
     p.add_argument('--csv', default=None)
+    p.add_argument('--tier', default=None, choices=VALID_TIERS,
+                   help='Apply an account-tier preset (25k/50k/100k/150k)')
     args = p.parse_args()
 
     cfg = Config()
     cfg.account_size = args.account
     cfg.risk.risk_per_trade_pct = args.risk
+    if args.tier:
+        apply_tier(cfg, args.tier)
+        print(f"Applied tier preset: {args.tier}")
 
     raw = load_csv(args.nq, 'NQ')
     print(f"NQ: {len(raw):,} bars  "

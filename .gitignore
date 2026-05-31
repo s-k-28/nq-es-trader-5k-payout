@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/
 .idea/
 .gstack/
+
+# Generated backtest cache
+data/_trades_cache.pkl

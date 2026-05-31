@@ -74,6 +74,8 @@ def build_argv(account: FleetAccount, shadow_override: bool) -> list[str]:
 
     if shadow:
         argv.append('--shadow')
+    if account.tier:
+        argv += ['--tier', str(account.tier)]
     return argv
 
 

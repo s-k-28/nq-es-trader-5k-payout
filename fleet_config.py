@@ -49,6 +49,7 @@ class FleetAccount:
     name: str
     broker: str  # 'ib' | 'topstep'
     shadow: bool = False
+    tier: str | None = None  # account-tier preset: '25k'|'50k'|'100k'|'150k'
 
     # IB-only
     host: str = '127.0.0.1'
